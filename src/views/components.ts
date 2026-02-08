@@ -50,6 +50,95 @@ export async function renderMarkdown(
 	await MarkdownRenderer.render(app, content, container, "", component);
 }
 
+/** Create a multi-select tag filter with chips and dropdown. */
+export function createTagFilter(
+	container: HTMLElement,
+	tags: string[],
+	onChange: (selected: string[]) => void
+): void {
+	const wrapper = container.createDiv({ cls: "pkm-rag-tag-filter" });
+	wrapper.createEl("small", {
+		text: "Filter by tags",
+		cls: "pkm-rag-tag-filter-label",
+	});
+
+	const selected = new Set<string>();
+
+	const chipsContainer = wrapper.createDiv({
+		cls: "pkm-rag-chips-container",
+	});
+
+	const searchInput = wrapper.createEl("input", {
+		type: "text",
+		placeholder: "Search tags...",
+		cls: "pkm-rag-note-search",
+	});
+
+	const dropdown = wrapper.createDiv({
+		cls: "pkm-rag-note-dropdown",
+	});
+	dropdown.style.display = "none";
+
+	const renderChips = () => {
+		chipsContainer.empty();
+		for (const tag of selected) {
+			const chip = chipsContainer.createDiv({
+				cls: "pkm-rag-chip",
+			});
+			chip.createSpan({ text: tag });
+			const removeBtn = chip.createEl("button", {
+				text: "\u00d7",
+				cls: "pkm-rag-chip-remove",
+			});
+			removeBtn.addEventListener("click", () => {
+				selected.delete(tag);
+				renderChips();
+				onChange(Array.from(selected));
+			});
+		}
+	};
+
+	const renderDropdown = (filter: string) => {
+		dropdown.empty();
+		const filtered = tags.filter(
+			(t) =>
+				!selected.has(t) &&
+				t.toLowerCase().includes(filter.toLowerCase())
+		);
+		if (filtered.length === 0) {
+			dropdown.style.display = "none";
+			return;
+		}
+		dropdown.style.display = "block";
+		for (const tag of filtered.slice(0, 20)) {
+			const item = dropdown.createDiv({
+				text: tag,
+				cls: "pkm-rag-dropdown-item",
+			});
+			item.addEventListener("click", () => {
+				selected.add(tag);
+				searchInput.value = "";
+				dropdown.style.display = "none";
+				renderChips();
+				onChange(Array.from(selected));
+			});
+		}
+	};
+
+	searchInput.addEventListener("input", () => {
+		renderDropdown(searchInput.value);
+	});
+	searchInput.addEventListener("focus", () => {
+		renderDropdown(searchInput.value);
+	});
+
+	document.addEventListener("click", (e) => {
+		if (!wrapper.contains(e.target as Node)) {
+			dropdown.style.display = "none";
+		}
+	});
+}
+
 /** Create a searchable note selector dropdown. */
 export function createNoteSelector(
 	container: HTMLElement,

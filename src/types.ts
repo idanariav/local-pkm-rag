@@ -4,6 +4,7 @@ export interface ParsedNote {
 	title: string;
 	description: string;
 	aliases: string[];
+	tags: string[];
 	content: string;
 	filePath: string;
 	outgoingLinks: string[];
@@ -15,6 +16,7 @@ export interface ChunkMetadata {
 	title: string;
 	description: string;
 	aliases: string;
+	tags: string;
 	outgoingLinks: string;
 	chunkIndex: number;
 	totalChunks: number;

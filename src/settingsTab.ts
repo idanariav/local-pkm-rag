@@ -94,19 +94,22 @@ export class PkmRagSettingTab extends PluginSettingTab {
 		// --- Vault Folders ---
 		containerEl.createEl("h3", { text: "Vault Folders" });
 
+		containerEl.createEl("p", {
+			text: "Configure which folders to embed. Leave empty to embed the entire vault. Per-folder overrides inherit from the global parsing defaults below.",
+			cls: "setting-item-description",
+		});
+
+		const folderListEl = containerEl.createDiv("pkm-folder-list");
+		this.renderFolderList(folderListEl);
+
 		new Setting(containerEl)
-			.setName("Folders to embed")
-			.setDesc(
-				"Comma-separated folder paths to embed (e.g. 'Content/Notes, Projects'). Leave empty for entire vault."
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("Leave empty for entire vault")
-					.setValue(this.plugin.settings.foldersToEmbed)
-					.onChange(async (value) => {
-						this.plugin.settings.foldersToEmbed = value;
-						await this.plugin.saveSettings();
-					})
+			.addButton((btn) =>
+				btn.setButtonText("+ Add folder").onClick(async () => {
+					this.plugin.settings.folderConfigs.push({ folder: "" });
+					await this.plugin.saveSettings();
+					folderListEl.empty();
+					this.renderFolderList(folderListEl);
+				})
 			);
 
 		new Setting(containerEl)
@@ -135,8 +138,13 @@ export class PkmRagSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// --- Parsing ---
-		containerEl.createEl("h3", { text: "Parsing" });
+		// --- Parsing (Global Defaults) ---
+		containerEl.createEl("h3", { text: "Parsing (Global Defaults)" });
+
+		containerEl.createEl("p", {
+			text: "These settings are used for all files unless overridden by a per-folder configuration above.",
+			cls: "setting-item-description",
+		});
 
 		new Setting(containerEl)
 			.setName("Content mode")
@@ -157,16 +165,36 @@ export class PkmRagSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Section header")
+			.setName("Section header name")
 			.setDesc(
-				"Markdown header to extract content from (only used in Section mode)"
+				"Heading text to extract content from (only used in Section mode)"
 			)
 			.addText((text) =>
 				text
-					.setPlaceholder("## Notes")
-					.setValue(this.plugin.settings.noteSectionHeader)
+					.setPlaceholder("Notes")
+					.setValue(this.plugin.settings.noteSectionHeaderName)
 					.onChange(async (value) => {
-						this.plugin.settings.noteSectionHeader = value;
+						this.plugin.settings.noteSectionHeaderName = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Section header level")
+			.setDesc(
+				"Heading level to match (e.g. 2 = ##, 3 = ###)"
+			)
+			.addDropdown((dd) =>
+				dd
+					.addOption("1", "H1 (#)")
+					.addOption("2", "H2 (##)")
+					.addOption("3", "H3 (###)")
+					.addOption("4", "H4 (####)")
+					.addOption("5", "H5 (#####)")
+					.addOption("6", "H6 (######)")
+					.setValue(String(this.plugin.settings.noteSectionHeaderLevel))
+					.onChange(async (value) => {
+						this.plugin.settings.noteSectionHeaderLevel = parseInt(value);
 						await this.plugin.saveSettings();
 					})
 			);
@@ -433,5 +461,101 @@ export class PkmRagSettingTab extends PluginSettingTab {
 			text: `Embedded: ${totalNotes} notes, ${totalChunks} chunks`,
 			cls: "setting-item-description",
 		});
+	}
+
+	private renderFolderList(containerEl: HTMLElement): void {
+		const configs = this.plugin.settings.folderConfigs;
+
+		if (configs.length === 0) {
+			containerEl.createEl("p", {
+				text: "No folders configured. Entire vault will be embedded.",
+				cls: "setting-item-description",
+			});
+			return;
+		}
+
+		for (let i = 0; i < configs.length; i++) {
+			const config = configs[i];
+			const groupEl = containerEl.createDiv("pkm-folder-config-group");
+			groupEl.style.border = "1px solid var(--background-modifier-border)";
+			groupEl.style.borderRadius = "8px";
+			groupEl.style.padding = "8px 12px";
+			groupEl.style.marginBottom = "8px";
+
+			new Setting(groupEl)
+				.setName(`Folder ${i + 1}`)
+				.addText((text) =>
+					text
+						.setPlaceholder("e.g. Content/Notes")
+						.setValue(config.folder)
+						.onChange(async (value) => {
+							config.folder = value.trim().replace(/\/+$/, "");
+							await this.plugin.saveSettings();
+						})
+				)
+				.addExtraButton((btn) =>
+					btn
+						.setIcon("x")
+						.setTooltip("Remove folder")
+						.onClick(async () => {
+							this.plugin.settings.folderConfigs.splice(i, 1);
+							await this.plugin.saveSettings();
+							containerEl.empty();
+							this.renderFolderList(containerEl);
+						})
+				);
+
+			new Setting(groupEl)
+				.setName("Content mode")
+				.addDropdown((dd) =>
+					dd
+						.addOption("", "Use default")
+						.addOption("section", "Section only")
+						.addOption("full", "Full content")
+						.setValue(config.contentMode ?? "")
+						.onChange(async (value) => {
+							config.contentMode = value === ""
+								? undefined
+								: (value as "section" | "full");
+							await this.plugin.saveSettings();
+						})
+				);
+
+			new Setting(groupEl)
+				.setName("Section header name")
+				.addText((text) =>
+					text
+						.setPlaceholder("(use default)")
+						.setValue(config.noteSectionHeaderName ?? "")
+						.onChange(async (value) => {
+							config.noteSectionHeaderName = value.trim() || undefined;
+							await this.plugin.saveSettings();
+						})
+				);
+
+			new Setting(groupEl)
+				.setName("Section header level")
+				.addDropdown((dd) =>
+					dd
+						.addOption("", "Use default")
+						.addOption("1", "H1 (#)")
+						.addOption("2", "H2 (##)")
+						.addOption("3", "H3 (###)")
+						.addOption("4", "H4 (####)")
+						.addOption("5", "H5 (#####)")
+						.addOption("6", "H6 (######)")
+						.setValue(
+							config.noteSectionHeaderLevel != null
+								? String(config.noteSectionHeaderLevel)
+								: ""
+						)
+						.onChange(async (value) => {
+							config.noteSectionHeaderLevel = value === ""
+								? undefined
+								: parseInt(value);
+							await this.plugin.saveSettings();
+						})
+				);
+		}
 	}
 }

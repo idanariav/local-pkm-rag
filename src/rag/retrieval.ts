@@ -11,10 +11,12 @@ export async function retrieveContext(
 	vectorStore: VectorStore,
 	ollamaClient: OllamaClient,
 	nResults: number,
-	threshold: number
+	threshold: number,
+	filterTags?: string[]
 ): Promise<RetrievalResult> {
 	const queryEmbedding = await ollamaClient.embed(query);
-	const results = vectorStore.search(queryEmbedding, nResults);
+	const tagSet = filterTags && filterTags.length > 0 ? new Set(filterTags) : undefined;
+	const results = vectorStore.search(queryEmbedding, nResults, undefined, tagSet);
 
 	const contextParts: string[] = [];
 	const sources: SourceInfo[] = [];
@@ -58,7 +60,8 @@ export function findSimilarNotes(
 	vectorStore: VectorStore,
 	filterLinked: boolean,
 	topK: number,
-	threshold: number
+	threshold: number,
+	filterTags?: string[]
 ): SimilarNote[] {
 	const targetChunks = vectorStore.getChunksByTitle(title);
 	if (targetChunks.length === 0) return [];
@@ -96,10 +99,12 @@ export function findSimilarNotes(
 	}
 
 	// Search with over-fetch to account for filtering
+	const tagSet = filterTags && filterTags.length > 0 ? new Set(filterTags) : undefined;
 	const results = vectorStore.search(
 		queryEmbedding,
 		topK + 20,
-		new Set([targetUuid])
+		new Set([targetUuid]),
+		tagSet
 	);
 
 	const similar: SimilarNote[] = [];

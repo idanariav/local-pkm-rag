@@ -1,12 +1,14 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
 import type PkmRagPlugin from "../main";
 import { findSimilarNotes } from "../rag/retrieval";
+import { createTagFilter } from "./components";
 
 export const RELATED_NOTES_VIEW_TYPE = "pkm-rag-related-notes";
 
 export class RelatedNotesView extends ItemView {
 	private plugin: PkmRagPlugin;
 	private filterLinked: boolean;
+	private selectedTags: string[] = [];
 	private resultsContainer: HTMLElement | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: PkmRagPlugin) {
@@ -51,6 +53,18 @@ export class RelatedNotesView extends ItemView {
 			this.filterLinked = toggle.checked;
 			this.refresh();
 		});
+
+		// Tag filter
+		const allTags = this.plugin.vectorStore.getAllTags();
+		if (allTags.length > 0) {
+			const tagFilterEl = container.createDiv({
+				cls: "pkm-rag-related-tag-filter",
+			});
+			createTagFilter(tagFilterEl, allTags, (tags) => {
+				this.selectedTags = tags;
+				this.refresh();
+			});
+		}
 
 		// Results container
 		this.resultsContainer = container.createDiv({
@@ -110,12 +124,14 @@ export class RelatedNotesView extends ItemView {
 
 		// Use setTimeout to let the UI update before the computation
 		setTimeout(() => {
+			const tags = this.selectedTags.length > 0 ? this.selectedTags : undefined;
 			const similar = findSimilarNotes(
 				activeFile.basename,
 				this.plugin.vectorStore,
 				this.filterLinked,
 				this.plugin.settings.similarTopK,
-				this.plugin.settings.similarityThreshold
+				this.plugin.settings.similarityThreshold,
+				tags
 			);
 
 			container.empty();

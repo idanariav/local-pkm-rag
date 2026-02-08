@@ -8,6 +8,7 @@ export const DEFAULTS = {
 	CHUNK_OVERLAP: 100,
 	MIN_CHUNK_LENGTH: 50,
 	CHUNK_SEPARATORS: ["\n## ", "\n### ", "\n\n", "\n1. ", "\n- ", "\n", ". ", " "],
+	CHUNK_SEPARATORS_NO_HEADINGS: ["\n\n", "\n1. ", "\n- ", "\n", ". ", " "],
 
 	TOP_K: 5,
 	SIMILARITY_THRESHOLD: 0.5,
@@ -16,7 +17,8 @@ export const DEFAULTS = {
 	ENABLE_QUERY_REWRITE: false,
 
 	CONTENT_MODE: "section" as const,
-	NOTES_SECTION_HEADER: "## Notes",
+	NOTES_SECTION_HEADER_NAME: "Notes",
+	NOTES_SECTION_HEADER_LEVEL: 2,
 	REQUIRED_FRONTMATTER_KEY: "UUID",
 	MODIFIED_FRONTMATTER_KEY: "Modified",
 	DESCRIPTION_FRONTMATTER_KEY: "Description",

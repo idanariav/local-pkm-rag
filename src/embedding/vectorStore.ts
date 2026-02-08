@@ -161,6 +161,21 @@ export class VectorStore {
 		return state;
 	}
 
+	/** Get all unique tags across stored chunks. */
+	getAllTags(): string[] {
+		const tags = new Set<string>();
+		for (const chunk of this.chunks.values()) {
+			const tagStr = chunk.metadata.tags || "";
+			if (tagStr) {
+				for (const tag of tagStr.split(",")) {
+					const trimmed = tag.trim();
+					if (trimmed) tags.add(trimmed);
+				}
+			}
+		}
+		return Array.from(tags).sort();
+	}
+
 	/** Get all unique note titles. */
 	getAllTitles(): string[] {
 		const titles = new Set<string>();
@@ -210,13 +225,23 @@ export class VectorStore {
 	search(
 		queryEmbedding: number[],
 		topK: number,
-		excludeUuids?: Set<string>
+		excludeUuids?: Set<string>,
+		filterTags?: Set<string>
 	): Array<{ chunk: StoredChunk; similarity: number }> {
 		const results: Array<{ chunk: StoredChunk; similarity: number }> = [];
 
 		for (const chunk of this.chunks.values()) {
 			if (excludeUuids && excludeUuids.has(chunk.metadata.uuid)) {
 				continue;
+			}
+			if (filterTags && filterTags.size > 0) {
+				const chunkTags = (chunk.metadata.tags || "")
+					.split(",")
+					.map((t) => t.trim())
+					.filter(Boolean);
+				if (!chunkTags.some((t) => filterTags.has(t))) {
+					continue;
+				}
 			}
 			const similarity = cosineSimilarity(queryEmbedding, chunk.embedding);
 			results.push({ chunk, similarity });

@@ -1,5 +1,5 @@
 import { Notice, Plugin, TFile } from "obsidian";
-import { PkmRagSettings, DEFAULT_SETTINGS } from "./settings";
+import { PkmRagSettings, DEFAULT_SETTINGS, FolderConfig, isFileInScope } from "./settings";
 import { PkmRagSettingTab } from "./settingsTab";
 import { VectorStore } from "./embedding/vectorStore";
 import { OllamaClient } from "./embedding/ollamaClient";
@@ -122,7 +122,23 @@ export default class PkmRagPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const loaded = await this.loadData();
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+
+		// Migrate old foldersToEmbed string to folderConfigs array
+		if (loaded && typeof (loaded as any).foldersToEmbed === "string" && !loaded.folderConfigs) {
+			const oldFolders = ((loaded as any).foldersToEmbed as string)
+				.split(",")
+				.map((f: string) => f.trim())
+				.filter(Boolean);
+
+			this.settings.folderConfigs = oldFolders.map((folder: string): FolderConfig => ({
+				folder,
+			}));
+
+			delete (this.settings as any).foldersToEmbed;
+			await this.saveData(this.settings);
+		}
 	}
 
 	async saveSettings() {
@@ -198,6 +214,8 @@ export default class PkmRagPlugin extends Plugin {
 	}
 
 	private debouncedEmbed(file: TFile) {
+		if (!isFileInScope(file.path, this.settings.folderConfigs)) return;
+
 		const existing = this.embedDebounceTimers.get(file.path);
 		if (existing) {
 			clearTimeout(existing);

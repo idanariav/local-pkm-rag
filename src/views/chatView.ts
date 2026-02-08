@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
 import type PkmRagPlugin from "../main";
 import { ChatMessage, ChatMode, SourceInfo } from "../types";
-import { createSourcesEl, renderMarkdown, createNoteSelector } from "./components";
+import { createSourcesEl, renderMarkdown, createNoteSelector, createTagFilter } from "./components";
 import {
 	runAskMode,
 	runConnectMode,
@@ -26,6 +26,7 @@ export class ChatView extends ItemView {
 
 	// Mode-specific state
 	private selectedNotes: string[] = [];
+	private selectedTags: string[] = [];
 
 	constructor(leaf: WorkspaceLeaf, plugin: PkmRagPlugin) {
 		super(leaf);
@@ -85,6 +86,17 @@ export class ChatView extends ItemView {
 			this.messages = [];
 			this.renderMessages();
 		});
+
+		// Tag filter (persists across mode switches)
+		const tagFilterEl = container.createDiv({
+			cls: "pkm-rag-chat-tag-filter",
+		});
+		const allTags = this.plugin.vectorStore.getAllTags();
+		if (allTags.length > 0) {
+			createTagFilter(tagFilterEl, allTags, (tags) => {
+				this.selectedTags = tags;
+			});
+		}
 
 		// Mode-specific config area
 		this.modeConfigEl = container.createDiv({
@@ -295,6 +307,8 @@ export class ChatView extends ItemView {
 
 			let result: { answer: string; sources: SourceInfo[] };
 
+			const tags = this.selectedTags.length > 0 ? this.selectedTags : undefined;
+
 			switch (this.currentMode) {
 				case "ask":
 					result = await runAskMode(
@@ -302,7 +316,8 @@ export class ChatView extends ItemView {
 						this.plugin.vectorStore,
 						this.plugin.ollamaClient,
 						this.plugin.settings,
-						onToken
+						onToken,
+						tags
 					);
 					break;
 				case "connect":
@@ -311,7 +326,8 @@ export class ChatView extends ItemView {
 						this.plugin.vectorStore,
 						this.plugin.ollamaClient,
 						this.plugin.settings,
-						onToken
+						onToken,
+						tags
 					);
 					break;
 				case "gap":
@@ -320,7 +336,8 @@ export class ChatView extends ItemView {
 						this.plugin.vectorStore,
 						this.plugin.ollamaClient,
 						this.plugin.settings,
-						onToken
+						onToken,
+						tags
 					);
 					break;
 				case "devils_advocate":
@@ -329,7 +346,8 @@ export class ChatView extends ItemView {
 						this.plugin.vectorStore,
 						this.plugin.ollamaClient,
 						this.plugin.settings,
-						onToken
+						onToken,
+						tags
 					);
 					break;
 			}

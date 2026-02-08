@@ -45,7 +45,8 @@ export async function runAskMode(
 	vectorStore: VectorStore,
 	ollamaClient: OllamaClient,
 	settings: PkmRagSettings,
-	onToken?: (token: string) => void
+	onToken?: (token: string) => void,
+	filterTags?: string[]
 ): Promise<ModeResult> {
 	// Optional query rewriting
 	let searchQuery = question;
@@ -58,7 +59,8 @@ export async function runAskMode(
 		vectorStore,
 		ollamaClient,
 		settings.topK,
-		settings.similarityThreshold
+		settings.similarityThreshold,
+		filterTags
 	);
 
 	if (!formattedContext) {
@@ -91,7 +93,8 @@ export async function runConnectMode(
 	vectorStore: VectorStore,
 	ollamaClient: OllamaClient,
 	settings: PkmRagSettings,
-	onToken?: (token: string) => void
+	onToken?: (token: string) => void,
+	filterTags?: string[]
 ): Promise<ModeResult> {
 	const conceptContexts = new Map<string, string>();
 	const allSources: SourceInfo[] = [];
@@ -102,7 +105,8 @@ export async function runConnectMode(
 			vectorStore,
 			ollamaClient,
 			settings.topK,
-			settings.similarityThreshold
+			settings.similarityThreshold,
+			filterTags
 		);
 		conceptContexts.set(
 			noteTitle,
@@ -143,14 +147,16 @@ export async function runGapMode(
 	vectorStore: VectorStore,
 	ollamaClient: OllamaClient,
 	settings: PkmRagSettings,
-	onToken?: (token: string) => void
+	onToken?: (token: string) => void,
+	filterTags?: string[]
 ): Promise<ModeResult> {
 	const { formattedContext, sources } = await retrieveContext(
 		topic,
 		vectorStore,
 		ollamaClient,
 		settings.gapAnalysisTopK,
-		settings.similarityThreshold
+		settings.similarityThreshold,
+		filterTags
 	);
 
 	if (!formattedContext) {
@@ -182,7 +188,8 @@ export async function runDevilsAdvocateMode(
 	vectorStore: VectorStore,
 	ollamaClient: OllamaClient,
 	settings: PkmRagSettings,
-	onToken?: (token: string) => void
+	onToken?: (token: string) => void,
+	filterTags?: string[]
 ): Promise<ModeResult> {
 	// Get target note's chunks
 	const targetChunks = vectorStore.getChunksByTitle(title);
@@ -197,10 +204,12 @@ export async function runDevilsAdvocateMode(
 	const noteContext = targetChunks.map((c) => c.text).join("\n\n");
 
 	// Search for related notes using the first chunk's embedding
+	const tagSet = filterTags && filterTags.length > 0 ? new Set(filterTags) : undefined;
 	const results = vectorStore.search(
 		targetChunks[0].embedding,
 		settings.topK + 5,
-		new Set([targetUuid])
+		new Set([targetUuid]),
+		tagSet
 	);
 
 	const relatedParts: string[] = [];

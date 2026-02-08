@@ -1,6 +1,7 @@
 import { App, TFile } from "obsidian";
 import { ParsedNote } from "./types";
-import { PkmRagSettings } from "./settings";
+import { PkmRagSettings, resolveParseSettings } from "./settings";
+import { extractSectionByHeading } from "./markdownParser";
 
 const PROPERTY_WIKILINK_PATTERN = /\([A-Za-z]+::\s*\[\[(?:[^\]|]*\|)?([^\]]+)\]\]\)/g;
 const WIKILINK_PATTERN = /\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/g;
@@ -11,17 +12,12 @@ const WIKILINK_TARGET_PATTERN = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g;
 const PROPERTY_WIKILINK_TARGET_PATTERN = /\([A-Za-z]+::\s*\[\[([^\]|]+)(?:\|[^\]]*)?\]\]\)/g;
 
 /**
- * Extract content under a specific heading.
- * Captures from the heading until the next same-level heading or end of file.
+ * Extract content under a specific heading using AST-based parsing.
+ * Captures from the heading until the next same-or-higher-level heading or end of file.
+ * Headings inside code blocks are correctly ignored.
  */
-export function extractSection(text: string, header: string): string | null {
-	// Escape special regex characters in the header
-	const escaped = header.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	const regex = new RegExp(`(?:^|\\n)${escaped}\\s*\\n(.*?)(?=\\n## |$)`, "s");
-	const match = text.match(regex);
-	if (!match) return null;
-	const content = match[1].trim();
-	return content || null;
+export function extractSection(text: string, headerName: string, headerLevel: number): string | null {
+	return extractSectionByHeading(text, headerName, headerLevel);
 }
 
 /**
@@ -96,10 +92,13 @@ export async function parseNote(
 
 	const text = await app.vault.cachedRead(file);
 
+	// Resolve per-folder parsing settings (falls back to global defaults)
+	const parse = resolveParseSettings(file.path, settings);
+
 	// Extract content based on content mode
 	let rawContent: string | null;
-	if (settings.contentMode === "section") {
-		rawContent = extractSection(text, settings.noteSectionHeader);
+	if (parse.contentMode === "section") {
+		rawContent = extractSection(text, parse.noteSectionHeaderName, parse.noteSectionHeaderLevel);
 	} else {
 		rawContent = extractFullContent(text);
 	}
@@ -114,6 +113,9 @@ export async function parseNote(
 	const modified = String(frontmatter?.[settings.modifiedFrontmatterKey] ?? "");
 	const description = String(frontmatter?.[settings.descriptionFrontmatterKey] ?? "");
 	const aliases = normalizeList(frontmatter?.aliases);
+	const tags = normalizeList(frontmatter?.tags).map((t) =>
+		t.startsWith("#") ? t.slice(1) : t
+	);
 
 	return {
 		uuid: String(uuid),
@@ -121,6 +123,7 @@ export async function parseNote(
 		title: file.basename,
 		description,
 		aliases,
+		tags,
 		content,
 		filePath: file.path,
 		outgoingLinks,

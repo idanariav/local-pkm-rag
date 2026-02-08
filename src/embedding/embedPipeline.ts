@@ -6,6 +6,7 @@ import { parseNote } from "../parser";
 import { PkmRagSettings } from "../settings";
 import { StoredChunk, EmbedStats, NoteChunk, ParsedNote } from "../types";
 import { DEFAULTS } from "../constants";
+import { splitMarkdownByHeadings } from "../markdownParser";
 
 export class EmbedPipeline {
 	private vectorStore: VectorStore;
@@ -185,12 +186,16 @@ export class EmbedPipeline {
 			return [];
 		}
 
+		// Split by headings using AST, then chunk each section with non-heading separators
+		const sections = splitMarkdownByHeadings(fullText);
 		const splitter = new RecursiveCharacterTextSplitter(
 			this.settings.chunkSize,
 			this.settings.chunkOverlap,
-			[...DEFAULTS.CHUNK_SEPARATORS]
+			[...DEFAULTS.CHUNK_SEPARATORS_NO_HEADINGS]
 		);
-		const texts = splitter.splitText(fullText);
+		const texts = sections.flatMap((section) =>
+			splitter.splitText(section)
+		);
 
 		// Filter out very short chunks
 		const validTexts = texts.filter(
@@ -216,6 +221,7 @@ export class EmbedPipeline {
 						? note.description.substring(0, 500)
 						: "",
 					aliases: note.aliases.join(", "),
+					tags: note.tags.join(", "),
 					outgoingLinks: note.outgoingLinks.join(", "),
 					chunkIndex: i,
 					totalChunks: validTexts.length,
@@ -231,9 +237,8 @@ export class EmbedPipeline {
 	private getFilesToEmbed(): TFile[] {
 		const allFiles = this.app.vault.getMarkdownFiles();
 
-		const includeFolders = this.settings.foldersToEmbed
-			.split(",")
-			.map((f) => f.trim())
+		const includeFolders = this.settings.folderConfigs
+			.map((c) => c.folder)
 			.filter(Boolean);
 
 		const excludeFolders = this.settings.excludedFolders
