@@ -4,13 +4,14 @@ A local, privacy-first RAG (Retrieval-Augmented Generation) plugin for Obsidian 
 
 ## Features
 
-### 🔍 Five Intelligent Modes
+### 🔍 Six Intelligent Modes
 
 1. **Ask**: General question-answering about your knowledge base
 2. **Find Related**: Discover notes similar to the current selection or query
 3. **Connect**: Identify meaningful connections between different topics in your vault
 4. **Gap Analysis**: Uncover knowledge gaps and areas for further exploration
 5. **Devil's Advocate**: Challenge your ideas with counterarguments drawn from your notes
+6. **Redundancy Check**: Detect duplicate or near-duplicate notes, and check if a new idea is already covered before creating it
 
 ### 🔒 Privacy-First Architecture
 
@@ -122,9 +123,15 @@ Note content here...
 
 ### Chat Modes
 
-1. Select a mode from the dropdown (Ask, Find Related, Connect, Gap Analysis, Devil's Advocate)
+1. Select a mode from the dropdown (Ask, Find Related, Connect, Gap Analysis, Devil's Advocate, Redundancy Check)
 2. Type your query
 3. Get streaming responses with relevant context from your vault
+
+### Checking for Redundant Notes
+
+1. Open the Chat view and select "Redundancy Check" mode
+2. Choose **Check existing note** to analyze whether a note in your vault is redundant with others, or **Check new idea** to see if an idea is already covered before creating a new note
+3. The plugin finds notes with 70%+ similarity and provides an LLM-powered analysis with a clear verdict (Redundant / Partial Overlap / Unique) and actionable recommendations
 
 ### Finding Related Notes
 
