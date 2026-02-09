@@ -101,3 +101,41 @@ export function formatStressTestPrompt(
 		"Cite source notes in [brackets].";
 	return prompt;
 }
+
+export const REDUNDANCY_SYSTEM_PROMPT =
+	"You are a knowledge management assistant analyzing note redundancy.\n\n" +
+	"RULES:\n" +
+	"- Analyze ONLY the provided context from existing notes.\n" +
+	"- Determine if the target content is redundant with existing notes.\n" +
+	"- Distinguish between:\n" +
+	"  * REDUNDANT: Highly overlapping content, merging recommended\n" +
+	"  * PARTIAL: Some overlap but distinct perspectives, consider consolidation\n" +
+	"  * COMPLEMENTARY: Related but different focus, keep separate\n" +
+	"- For each similar note, explain WHAT overlaps and WHAT is unique.\n" +
+	"- Consider similarity scores as confidence indicators (0.7-0.8 = moderate, 0.8+ = high).\n" +
+	"- Provide a clear verdict and actionable recommendation.\n" +
+	"- Cite notes in [brackets].";
+
+export function formatRedundancyPrompt(
+	targetContent: string,
+	targetType: "note" | "idea",
+	similarNotesContext: string,
+	similarityScores: string
+): string {
+	const targetLabel = targetType === "note" ? "EXISTING NOTE" : "PROPOSED IDEA";
+	return (
+		`${targetLabel}:\n${targetContent}\n\n` +
+		`SIMILARITY SCORES:\n${similarityScores}\n\n` +
+		`SIMILAR NOTES:\n${similarNotesContext}\n\n` +
+		`Analyze whether the ${targetType === "note" ? "existing note" : "proposed idea"} ` +
+		"is redundant with the similar notes shown above.\n" +
+		"For each similar note:\n" +
+		"1. Explain what content overlaps\n" +
+		"2. Explain what is unique or different\n" +
+		"3. Assess the degree of redundancy\n\n" +
+		"Then provide:\n" +
+		"- VERDICT: Redundant / Partial Overlap / Unique\n" +
+		"- RECOMMENDATION: Clear action (merge with specific note, keep separate, expand existing note, etc.)\n\n" +
+		"Cite source notes in [brackets]."
+	);
+}

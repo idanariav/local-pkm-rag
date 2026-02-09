@@ -8,11 +8,13 @@ import {
 	EXPLORE_SYSTEM_PROMPT,
 	GAP_SYSTEM_PROMPT,
 	STRESS_TEST_SYSTEM_PROMPT,
+	REDUNDANCY_SYSTEM_PROMPT,
 	QUERY_REWRITE_PROMPT,
 	formatRagPrompt,
 	formatExplorePrompt,
 	formatGapPrompt,
 	formatStressTestPrompt,
+	formatRedundancyPrompt,
 } from "./prompts";
 
 interface ModeResult {
@@ -248,6 +250,110 @@ export async function runDevilsAdvocateMode(
 	const prompt = formatStressTestPrompt(title, noteContext, relatedContext);
 	const messages = [
 		{ role: "system", content: STRESS_TEST_SYSTEM_PROMPT },
+		{ role: "user", content: prompt },
+	];
+
+	let answer: string;
+	if (onToken && settings.enableStreaming) {
+		answer = await ollamaClient.chatStream(messages, onToken);
+	} else {
+		answer = await ollamaClient.chat(messages);
+	}
+
+	return { answer, sources };
+}
+
+/** Redundancy Check mode: Determine if a note/idea is redundant with existing notes. */
+export async function runRedundancyMode(
+	input: string,
+	inputType: "note" | "idea",
+	vectorStore: VectorStore,
+	ollamaClient: OllamaClient,
+	settings: PkmRagSettings,
+	onToken?: (token: string) => void,
+	filterTags?: string[]
+): Promise<ModeResult> {
+	let queryEmbedding: number[];
+	let targetContent: string;
+	let excludeUuid: string | undefined;
+
+	if (inputType === "note") {
+		// Get existing note's embedding and content
+		const chunks = vectorStore.getChunksByTitle(input);
+		if (chunks.length === 0) {
+			return {
+				answer: `No note found with title "${input}".`,
+				sources: [],
+			};
+		}
+		queryEmbedding = chunks[0].embedding;
+		targetContent = chunks.map((c) => c.text).join("\n\n");
+		excludeUuid = chunks[0].metadata.uuid;
+	} else {
+		// Embed the idea text
+		queryEmbedding = await ollamaClient.embed(input);
+		targetContent = input;
+		excludeUuid = undefined;
+	}
+
+	// Search for similar notes with higher threshold (0.7+) for redundancy detection
+	const tagSet = filterTags && filterTags.length > 0 ? new Set(filterTags) : undefined;
+	const results = vectorStore.search(
+		queryEmbedding,
+		settings.similarTopK,
+		excludeUuid ? new Set([excludeUuid]) : undefined,
+		tagSet
+	);
+
+	// Filter by 0.7+ threshold and build context
+	const REDUNDANCY_THRESHOLD = 0.7;
+	const similarParts: string[] = [];
+	const scores: string[] = [];
+	const sources: SourceInfo[] = [];
+	const seenTitles = new Set<string>();
+
+	for (const { chunk, similarity } of results) {
+		if (similarity < REDUNDANCY_THRESHOLD) continue;
+
+		const title = chunk.metadata.title || "Unknown";
+		if (seenTitles.has(title)) continue;
+		seenTitles.add(title);
+
+		const score = Math.round(similarity * 1000) / 1000;
+		scores.push(`${title}: ${score}`);
+
+		let header = `[Source: ${title}] (Similarity: ${score})`;
+		if (chunk.metadata.description) {
+			header += `\nDescription: ${chunk.metadata.description}`;
+		}
+		similarParts.push(`${header}\n${chunk.text}`);
+
+		sources.push({
+			title,
+			description: chunk.metadata.description || "",
+			filePath: chunk.metadata.filePath,
+		});
+	}
+
+	if (similarParts.length === 0) {
+		return {
+			answer: `No similar notes found. This ${inputType === "note" ? "note" : "idea"} appears unique.`,
+			sources: [],
+		};
+	}
+
+	// Build prompt and get LLM analysis
+	const similarContext = similarParts.join("\n\n---\n\n");
+	const scoresText = scores.join("\n");
+	const prompt = formatRedundancyPrompt(
+		targetContent,
+		inputType,
+		similarContext,
+		scoresText
+	);
+
+	const messages = [
+		{ role: "system", content: REDUNDANCY_SYSTEM_PROMPT },
 		{ role: "user", content: prompt },
 	];
 

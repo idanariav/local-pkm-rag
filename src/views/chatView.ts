@@ -7,6 +7,7 @@ import {
 	runConnectMode,
 	runGapMode,
 	runDevilsAdvocateMode,
+	runRedundancyMode,
 } from "../rag/modes";
 
 export const CHAT_VIEW_TYPE = "pkm-rag-chat";
@@ -27,6 +28,7 @@ export class ChatView extends ItemView {
 	// Mode-specific state
 	private selectedNotes: string[] = [];
 	private selectedTags: string[] = [];
+	private redundancyInputType: "note" | "idea" = "note";
 
 	constructor(leaf: WorkspaceLeaf, plugin: PkmRagPlugin) {
 		super(leaf);
@@ -61,6 +63,7 @@ export class ChatView extends ItemView {
 			{ value: "connect", label: "Connect" },
 			{ value: "gap", label: "Gap Analysis" },
 			{ value: "devils_advocate", label: "Devil's Advocate" },
+			{ value: "redundancy", label: "Redundancy Check" },
 		];
 		for (const mode of modes) {
 			modeSelect.createEl("option", {
@@ -180,6 +183,62 @@ export class ChatView extends ItemView {
 				);
 				break;
 			}
+			case "redundancy": {
+				this.modeConfigEl.createEl("small", {
+					text: "Check if a note or idea is redundant with existing notes.",
+					cls: "pkm-rag-mode-tip",
+				});
+
+				// Radio buttons for input type selection
+				const typeSelector = this.modeConfigEl.createDiv({
+					cls: "pkm-rag-redundancy-type",
+				});
+
+				const noteRadioWrapper = typeSelector.createDiv({ cls: "pkm-rag-radio-wrapper" });
+				const noteRadio = noteRadioWrapper.createEl("input", {
+					type: "radio",
+					attr: { name: "redundancy-type", id: "redundancy-note" },
+				});
+				noteRadio.checked = this.redundancyInputType === "note";
+				noteRadioWrapper.createEl("label", {
+					text: "Check existing note",
+					attr: { for: "redundancy-note" },
+				});
+
+				const ideaRadioWrapper = typeSelector.createDiv({ cls: "pkm-rag-radio-wrapper" });
+				const ideaRadio = ideaRadioWrapper.createEl("input", {
+					type: "radio",
+					attr: { name: "redundancy-type", id: "redundancy-idea" },
+				});
+				ideaRadio.checked = this.redundancyInputType === "idea";
+				ideaRadioWrapper.createEl("label", {
+					text: "Check new idea",
+					attr: { for: "redundancy-idea" },
+				});
+
+				noteRadio.addEventListener("change", () => {
+					this.redundancyInputType = "note";
+					this.renderModeConfig();
+				});
+				ideaRadio.addEventListener("change", () => {
+					this.redundancyInputType = "idea";
+					this.renderModeConfig();
+				});
+
+				// Show note selector only if checking existing note
+				if (this.redundancyInputType === "note") {
+					createNoteSelector(
+						this.modeConfigEl,
+						titles,
+						"Search for a note...",
+						false,
+						(selected) => {
+							this.selectedNotes = selected;
+						}
+					);
+				}
+				break;
+			}
 		}
 
 		this.renderInputArea();
@@ -190,7 +249,9 @@ export class ChatView extends ItemView {
 		this.inputArea.empty();
 
 		const showTextInput =
-			this.currentMode === "ask" || this.currentMode === "gap";
+			this.currentMode === "ask" ||
+			this.currentMode === "gap" ||
+			(this.currentMode === "redundancy" && this.redundancyInputType === "idea");
 
 		if (showTextInput) {
 			this.textInput = this.inputArea.createEl("textarea", {
@@ -219,6 +280,8 @@ export class ChatView extends ItemView {
 				return "Ask about your notes...";
 			case "gap":
 				return "Enter a topic...";
+			case "redundancy":
+				return "Describe the note you want to create...";
 			default:
 				return "";
 		}
@@ -234,6 +297,8 @@ export class ChatView extends ItemView {
 				return "Analyze";
 			case "devils_advocate":
 				return "Challenge";
+			case "redundancy":
+				return "Check";
 		}
 	}
 
@@ -265,6 +330,21 @@ export class ChatView extends ItemView {
 					return;
 				}
 				userContent = `Challenge: ${this.selectedNotes[0]}`;
+				break;
+			}
+			case "redundancy": {
+				if (this.redundancyInputType === "note") {
+					if (this.selectedNotes.length === 0) {
+						this.addSystemMessage("Please select a note.");
+						return;
+					}
+					userContent = `Check redundancy: ${this.selectedNotes[0]}`;
+				} else {
+					const text = this.textInput?.value?.trim();
+					if (!text) return;
+					userContent = `Check idea: ${text}`;
+					if (this.textInput) this.textInput.value = "";
+				}
 				break;
 			}
 		}
@@ -343,6 +423,19 @@ export class ChatView extends ItemView {
 				case "devils_advocate":
 					result = await runDevilsAdvocateMode(
 						this.selectedNotes[0],
+						this.plugin.vectorStore,
+						this.plugin.ollamaClient,
+						this.plugin.settings,
+						onToken,
+						tags
+					);
+					break;
+				case "redundancy":
+					result = await runRedundancyMode(
+						this.redundancyInputType === "note"
+							? this.selectedNotes[0]
+							: userContent.replace("Check idea: ", ""),
+						this.redundancyInputType,
 						this.plugin.vectorStore,
 						this.plugin.ollamaClient,
 						this.plugin.settings,
