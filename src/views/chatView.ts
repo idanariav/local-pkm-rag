@@ -8,6 +8,7 @@ import {
 	runGapMode,
 	runDevilsAdvocateMode,
 	runRedundancyMode,
+	runUpdaterMode,
 } from "../rag/modes";
 
 export const CHAT_VIEW_TYPE = "pkm-rag-chat";
@@ -66,6 +67,7 @@ export class ChatView extends ItemView {
 			{ value: "gap", label: "Gap Analysis" },
 			{ value: "devils_advocate", label: "Devil's Advocate" },
 			{ value: "redundancy", label: "Redundancy Check" },
+		{ value: "updater", label: "Updater" },
 		];
 		for (const mode of modes) {
 			modeSelect.createEl("option", {
@@ -251,6 +253,23 @@ export class ChatView extends ItemView {
 				}
 				break;
 			}
+			case "updater": {
+				this.modeConfigEl.createEl("small", {
+					text: "Select a note to find missing insights from its backlinks.",
+					cls: "pkm-rag-mode-tip",
+				});
+				const { cleanup } = createNoteSelector(
+					this.modeConfigEl,
+					titles,
+					"Search for a note...",
+					false,
+					(selected) => {
+						this.selectedNotes = selected;
+					}
+				);
+				this.modeConfigCleanupFns.push(cleanup);
+				break;
+			}
 		}
 
 		this.renderInputArea();
@@ -311,6 +330,8 @@ export class ChatView extends ItemView {
 				return "Challenge";
 			case "redundancy":
 				return "Check";
+			case "updater":
+				return "Review";
 		}
 	}
 
@@ -342,6 +363,14 @@ export class ChatView extends ItemView {
 					return;
 				}
 				userContent = `Challenge: ${this.selectedNotes[0]}`;
+				break;
+			}
+			case "updater": {
+				if (this.selectedNotes.length === 0) {
+					this.addSystemMessage("Please select a note.");
+					return;
+				}
+				userContent = `Review backlinks: ${this.selectedNotes[0]}`;
 				break;
 			}
 			case "redundancy": {
@@ -448,6 +477,16 @@ export class ChatView extends ItemView {
 							? this.selectedNotes[0]
 							: userContent.replace("Check idea: ", ""),
 						this.redundancyInputType,
+						this.plugin.vectorStore,
+						this.plugin.ollamaClient,
+						this.plugin.settings,
+						onToken,
+						tags
+					);
+					break;
+				case "updater":
+					result = await runUpdaterMode(
+						this.selectedNotes[0],
 						this.plugin.vectorStore,
 						this.plugin.ollamaClient,
 						this.plugin.settings,

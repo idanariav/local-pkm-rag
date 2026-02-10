@@ -94,6 +94,34 @@ RULES:
 - Provide a clear verdict and actionable recommendation.
 - Cite notes in [brackets].`;
 
+export const UPDATER_SYSTEM_PROMPT = `You are a knowledge management assistant that identifies missing insights in a note by reviewing what other notes say about it.
+
+RULES:
+- Compare the target note's content against the backlink excerpts from other notes.
+- Identify insights, connections, or context that are mentioned in the linking notes but ABSENT from the target note.
+- Skip information that is already covered or implied by the target note.
+- Group your findings by source note for clarity.
+- Be specific: quote or paraphrase the missing insight and explain why it matters.
+- Cite source notes in [brackets].
+- If the target note already captures everything, say so.`;
+
+export function formatUpdaterPrompt(
+	title: string,
+	noteContext: string,
+	backlinkContext: string
+): string {
+	let prompt = `TARGET NOTE: "${title}"\n${noteContext}\n\n`;
+	prompt += `BACKLINK EXCERPTS (what other notes say about "${title}"):\n${backlinkContext}\n\n`;
+	prompt += `Review the backlink excerpts and identify insights, connections, or ideas about "${title}" that are NOT already captured in the target note.
+For each missing insight:
+1. State what is missing
+2. Cite which note mentions it [in brackets]
+3. Briefly explain why it could be valuable to add
+
+If the target note already covers everything mentioned in the backlinks, state that clearly.`;
+	return prompt;
+}
+
 export function formatRedundancyPrompt(
 	targetContent: string,
 	targetType: "note" | "idea",

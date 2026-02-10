@@ -260,6 +260,34 @@ export class VectorStore {
 		return heap.sort((a, b) => b.similarity - a.similarity);
 	}
 
+	/** Get all chunks from other notes whose outgoingLinks reference the target title or aliases. */
+	getChunksLinkingTo(title: string, aliases?: string[]): StoredChunk[] {
+		const targets = new Set<string>([title]);
+		if (aliases) {
+			for (const alias of aliases) {
+				if (alias) targets.add(alias);
+			}
+		}
+
+		const results: StoredChunk[] = [];
+		for (const chunk of this.chunks.values()) {
+			if (chunk.metadata.title === title) continue;
+			const links = (chunk.metadata.outgoingLinks || "")
+				.split(",")
+				.map((l) => l.trim())
+				.filter(Boolean);
+			if (links.some((l) => targets.has(l))) {
+				results.push(chunk);
+			}
+		}
+
+		return results.sort((a, b) =>
+			a.metadata.title !== b.metadata.title
+				? a.metadata.title.localeCompare(b.metadata.title)
+				: a.metadata.chunkIndex - b.metadata.chunkIndex
+		);
+	}
+
 	private getFilePath(plugin: Plugin): string {
 		if (this.embeddingsFolderPath) {
 			return `${this.embeddingsFolderPath}/${EMBEDDINGS_FILENAME}`;

@@ -10,12 +10,14 @@ import {
 	GAP_SYSTEM_PROMPT,
 	DEVILS_ADVOCATE_SYSTEM_PROMPT,
 	REDUNDANCY_SYSTEM_PROMPT,
+	UPDATER_SYSTEM_PROMPT,
 	QUERY_REWRITE_PROMPT,
 	formatExplorePrompt,
 	formatConnectPrompt,
 	formatGapPrompt,
 	formatDevilsAdvocatePrompt,
 	formatRedundancyPrompt,
+	formatUpdaterPrompt,
 } from "./prompts";
 import {
 	chatWithOptionalStreaming,
@@ -332,6 +334,97 @@ export async function runRedundancyMode(
 
 	const messages = [
 		{ role: "system", content: REDUNDANCY_SYSTEM_PROMPT },
+		{ role: "user", content: prompt },
+	];
+
+	const answer = await chatWithOptionalStreaming(
+		ollamaClient, messages, settings.enableStreaming, onToken
+	);
+
+	return { answer, sources };
+}
+
+/** Updater mode: Surface missing insights from notes that link to the target note. */
+export async function runUpdaterMode(
+	title: string,
+	vectorStore: VectorStore,
+	ollamaClient: OllamaClient,
+	settings: PkmRagSettings,
+	onToken?: (token: string) => void,
+	filterTags?: string[]
+): Promise<ModeResult> {
+	// Get target note's chunks
+	const targetChunks = vectorStore.getChunksByTitle(title);
+	if (targetChunks.length === 0) {
+		return {
+			answer: `No note found with title "${title}".`,
+			sources: [],
+		};
+	}
+
+	const noteContext = targetChunks.map((c) => c.text).join("\n\n");
+
+	// Extract aliases from target note metadata
+	const aliasStr = targetChunks[0].metadata.aliases || "";
+	const aliases = aliasStr
+		.split(",")
+		.map((a) => a.trim())
+		.filter(Boolean);
+
+	// Find chunks from other notes that link to this note
+	let backlinkChunks = vectorStore.getChunksLinkingTo(title, aliases);
+
+	// Apply tag filtering if specified
+	if (filterTags && filterTags.length > 0) {
+		const tagSet = new Set(filterTags);
+		backlinkChunks = backlinkChunks.filter((chunk) => {
+			const chunkTags = (chunk.metadata.tags || "")
+				.split(",")
+				.map((t) => t.trim())
+				.filter(Boolean);
+			return chunkTags.some((t) => tagSet.has(t));
+		});
+	}
+
+	if (backlinkChunks.length === 0) {
+		return {
+			answer: `No other notes link to "${title}". There are no backlink insights to review.`,
+			sources: [],
+		};
+	}
+
+	// Format backlink context with source headers
+	const backlinkParts: string[] = [];
+	const sources: SourceInfo[] = [
+		{
+			title,
+			description: targetChunks[0].metadata.description || "",
+			filePath: targetChunks[0].metadata.filePath,
+		},
+	];
+	const seenTitles = new Set<string>([title]);
+
+	for (const chunk of backlinkChunks) {
+		const srcTitle = chunk.metadata.title || "Unknown";
+		const description = chunk.metadata.description || "";
+
+		const header = formatSourceHeader(srcTitle, description);
+		backlinkParts.push(`${header}\n${chunk.text}`);
+
+		if (!seenTitles.has(srcTitle)) {
+			seenTitles.add(srcTitle);
+			sources.push({
+				title: srcTitle,
+				description,
+				filePath: chunk.metadata.filePath,
+			});
+		}
+	}
+
+	const backlinkContext = backlinkParts.join("\n\n---\n\n");
+	const prompt = formatUpdaterPrompt(title, noteContext, backlinkContext);
+	const messages = [
+		{ role: "system", content: UPDATER_SYSTEM_PROMPT },
 		{ role: "user", content: prompt },
 	];
 

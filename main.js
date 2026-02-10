@@ -918,6 +918,28 @@ var VectorStore = class {
     }
     return heap.sort((a, b) => b.similarity - a.similarity);
   }
+  /** Get all chunks from other notes whose outgoingLinks reference the target title or aliases. */
+  getChunksLinkingTo(title, aliases) {
+    const targets = /* @__PURE__ */ new Set([title]);
+    if (aliases) {
+      for (const alias of aliases) {
+        if (alias)
+          targets.add(alias);
+      }
+    }
+    const results = [];
+    for (const chunk of this.chunks.values()) {
+      if (chunk.metadata.title === title)
+        continue;
+      const links = (chunk.metadata.outgoingLinks || "").split(",").map((l) => l.trim()).filter(Boolean);
+      if (links.some((l) => targets.has(l))) {
+        results.push(chunk);
+      }
+    }
+    return results.sort(
+      (a, b) => a.metadata.title !== b.metadata.title ? a.metadata.title.localeCompare(b.metadata.title) : a.metadata.chunkIndex - b.metadata.chunkIndex
+    );
+  }
   getFilePath(plugin) {
     if (this.embeddingsFolderPath) {
       return `${this.embeddingsFolderPath}/${EMBEDDINGS_FILENAME}`;
@@ -8384,6 +8406,34 @@ RULES:
 - Consider similarity scores as confidence indicators (0.7-0.8 = moderate, 0.8+ = high).
 - Provide a clear verdict and actionable recommendation.
 - Cite notes in [brackets].`;
+var UPDATER_SYSTEM_PROMPT = `You are a knowledge management assistant that identifies missing insights in a note by reviewing what other notes say about it.
+
+RULES:
+- Compare the target note's content against the backlink excerpts from other notes.
+- Identify insights, connections, or context that are mentioned in the linking notes but ABSENT from the target note.
+- Skip information that is already covered or implied by the target note.
+- Group your findings by source note for clarity.
+- Be specific: quote or paraphrase the missing insight and explain why it matters.
+- Cite source notes in [brackets].
+- If the target note already captures everything, say so.`;
+function formatUpdaterPrompt(title, noteContext, backlinkContext) {
+  let prompt = `TARGET NOTE: "${title}"
+${noteContext}
+
+`;
+  prompt += `BACKLINK EXCERPTS (what other notes say about "${title}"):
+${backlinkContext}
+
+`;
+  prompt += `Review the backlink excerpts and identify insights, connections, or ideas about "${title}" that are NOT already captured in the target note.
+For each missing insight:
+1. State what is missing
+2. Cite which note mentions it [in brackets]
+3. Briefly explain why it could be valuable to add
+
+If the target note already covers everything mentioned in the backlinks, state that clearly.`;
+  return prompt;
+}
 function formatRedundancyPrompt(targetContent, targetType, similarNotesContext, similarityScores) {
   const targetLabel = targetType === "note" ? "EXISTING NOTE" : "PROPOSED IDEA";
   return `${targetLabel}:
@@ -8648,6 +8698,69 @@ ${chunk.text}`);
   );
   return { answer, sources };
 }
+async function runUpdaterMode(title, vectorStore, ollamaClient, settings, onToken, filterTags) {
+  const targetChunks = vectorStore.getChunksByTitle(title);
+  if (targetChunks.length === 0) {
+    return {
+      answer: `No note found with title "${title}".`,
+      sources: []
+    };
+  }
+  const noteContext = targetChunks.map((c) => c.text).join("\n\n");
+  const aliasStr = targetChunks[0].metadata.aliases || "";
+  const aliases = aliasStr.split(",").map((a) => a.trim()).filter(Boolean);
+  let backlinkChunks = vectorStore.getChunksLinkingTo(title, aliases);
+  if (filterTags && filterTags.length > 0) {
+    const tagSet = new Set(filterTags);
+    backlinkChunks = backlinkChunks.filter((chunk) => {
+      const chunkTags = (chunk.metadata.tags || "").split(",").map((t) => t.trim()).filter(Boolean);
+      return chunkTags.some((t) => tagSet.has(t));
+    });
+  }
+  if (backlinkChunks.length === 0) {
+    return {
+      answer: `No other notes link to "${title}". There are no backlink insights to review.`,
+      sources: []
+    };
+  }
+  const backlinkParts = [];
+  const sources = [
+    {
+      title,
+      description: targetChunks[0].metadata.description || "",
+      filePath: targetChunks[0].metadata.filePath
+    }
+  ];
+  const seenTitles = /* @__PURE__ */ new Set([title]);
+  for (const chunk of backlinkChunks) {
+    const srcTitle = chunk.metadata.title || "Unknown";
+    const description = chunk.metadata.description || "";
+    const header = formatSourceHeader(srcTitle, description);
+    backlinkParts.push(`${header}
+${chunk.text}`);
+    if (!seenTitles.has(srcTitle)) {
+      seenTitles.add(srcTitle);
+      sources.push({
+        title: srcTitle,
+        description,
+        filePath: chunk.metadata.filePath
+      });
+    }
+  }
+  const backlinkContext = backlinkParts.join("\n\n---\n\n");
+  const prompt = formatUpdaterPrompt(title, noteContext, backlinkContext);
+  const messages = [
+    { role: "system", content: UPDATER_SYSTEM_PROMPT },
+    { role: "user", content: prompt }
+  ];
+  const answer = await chatWithOptionalStreaming(
+    ollamaClient,
+    messages,
+    settings.enableStreaming,
+    onToken
+  );
+  return { answer, sources };
+}
 
 // src/views/chatView.ts
 var CHAT_VIEW_TYPE = "pkm-rag-chat";
@@ -8693,7 +8806,8 @@ var ChatView = class extends import_obsidian5.ItemView {
       { value: "connect", label: "Connect" },
       { value: "gap", label: "Gap Analysis" },
       { value: "devils_advocate", label: "Devil's Advocate" },
-      { value: "redundancy", label: "Redundancy Check" }
+      { value: "redundancy", label: "Redundancy Check" },
+      { value: "updater", label: "Updater" }
     ];
     for (const mode of modes) {
       modeSelect.createEl("option", {
@@ -8861,6 +8975,23 @@ var ChatView = class extends import_obsidian5.ItemView {
         }
         break;
       }
+      case "updater": {
+        this.modeConfigEl.createEl("small", {
+          text: "Select a note to find missing insights from its backlinks.",
+          cls: "pkm-rag-mode-tip"
+        });
+        const { cleanup } = createNoteSelector(
+          this.modeConfigEl,
+          titles,
+          "Search for a note...",
+          false,
+          (selected) => {
+            this.selectedNotes = selected;
+          }
+        );
+        this.modeConfigCleanupFns.push(cleanup);
+        break;
+      }
     }
     this.renderInputArea();
   }
@@ -8912,6 +9043,8 @@ var ChatView = class extends import_obsidian5.ItemView {
         return "Challenge";
       case "redundancy":
         return "Check";
+      case "updater":
+        return "Review";
     }
   }
   async onSend() {
@@ -8944,6 +9077,14 @@ var ChatView = class extends import_obsidian5.ItemView {
           return;
         }
         userContent = `Challenge: ${this.selectedNotes[0]}`;
+        break;
+      }
+      case "updater": {
+        if (this.selectedNotes.length === 0) {
+          this.addSystemMessage("Please select a note.");
+          return;
+        }
+        userContent = `Review backlinks: ${this.selectedNotes[0]}`;
         break;
       }
       case "redundancy": {
@@ -9037,6 +9178,16 @@ var ChatView = class extends import_obsidian5.ItemView {
           result = await runRedundancyMode(
             this.redundancyInputType === "note" ? this.selectedNotes[0] : userContent.replace("Check idea: ", ""),
             this.redundancyInputType,
+            this.plugin.vectorStore,
+            this.plugin.ollamaClient,
+            this.plugin.settings,
+            onToken,
+            tags
+          );
+          break;
+        case "updater":
+          result = await runUpdaterMode(
+            this.selectedNotes[0],
             this.plugin.vectorStore,
             this.plugin.ollamaClient,
             this.plugin.settings,
