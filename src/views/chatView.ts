@@ -29,6 +29,8 @@ export class ChatView extends ItemView {
 	private selectedNotes: string[] = [];
 	private selectedTags: string[] = [];
 	private redundancyInputType: "note" | "idea" = "note";
+	private cleanupFns: (() => void)[] = [];
+	private modeConfigCleanupFns: (() => void)[] = [];
 
 	constructor(leaf: WorkspaceLeaf, plugin: PkmRagPlugin) {
 		super(leaf);
@@ -96,9 +98,10 @@ export class ChatView extends ItemView {
 		});
 		const allTags = this.plugin.vectorStore.getAllTags();
 		if (allTags.length > 0) {
-			createTagFilter(tagFilterEl, allTags, (tags) => {
+			const { cleanup } = createTagFilter(tagFilterEl, allTags, (tags) => {
 				this.selectedTags = tags;
 			});
+			this.cleanupFns.push(cleanup);
 		}
 
 		// Mode-specific config area
@@ -121,6 +124,10 @@ export class ChatView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		for (const fn of this.cleanupFns) fn();
+		this.cleanupFns = [];
+		for (const fn of this.modeConfigCleanupFns) fn();
+		this.modeConfigCleanupFns = [];
 		this.modeConfigEl = null;
 		this.messagesEl = null;
 		this.inputArea = null;
@@ -130,6 +137,8 @@ export class ChatView extends ItemView {
 
 	private renderModeConfig(): void {
 		if (!this.modeConfigEl) return;
+		for (const fn of this.modeConfigCleanupFns) fn();
+		this.modeConfigCleanupFns = [];
 		this.modeConfigEl.empty();
 
 		const titles = this.plugin.vectorStore.getAllTitles();
@@ -149,7 +158,7 @@ export class ChatView extends ItemView {
 					text: "Select 2+ notes to discover how they relate.",
 					cls: "pkm-rag-mode-tip",
 				});
-				createNoteSelector(
+				const { cleanup } = createNoteSelector(
 					this.modeConfigEl,
 					titles,
 					"Search notes...",
@@ -158,6 +167,7 @@ export class ChatView extends ItemView {
 						this.selectedNotes = selected;
 					}
 				);
+				this.modeConfigCleanupFns.push(cleanup);
 				break;
 			}
 			case "gap": {
@@ -172,7 +182,7 @@ export class ChatView extends ItemView {
 					text: "Select a note to challenge its reasoning.",
 					cls: "pkm-rag-mode-tip",
 				});
-				createNoteSelector(
+				const { cleanup } = createNoteSelector(
 					this.modeConfigEl,
 					titles,
 					"Search for a note...",
@@ -181,6 +191,7 @@ export class ChatView extends ItemView {
 						this.selectedNotes = selected;
 					}
 				);
+				this.modeConfigCleanupFns.push(cleanup);
 				break;
 			}
 			case "redundancy": {
@@ -227,7 +238,7 @@ export class ChatView extends ItemView {
 
 				// Show note selector only if checking existing note
 				if (this.redundancyInputType === "note") {
-					createNoteSelector(
+					const { cleanup } = createNoteSelector(
 						this.modeConfigEl,
 						titles,
 						"Search for a note...",
@@ -236,6 +247,7 @@ export class ChatView extends ItemView {
 							this.selectedNotes = selected;
 						}
 					);
+					this.modeConfigCleanupFns.push(cleanup);
 				}
 				break;
 			}

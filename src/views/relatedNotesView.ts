@@ -10,6 +10,7 @@ export class RelatedNotesView extends ItemView {
 	private filterLinked: boolean;
 	private selectedTags: string[] = [];
 	private resultsContainer: HTMLElement | null = null;
+	private cleanupFns: (() => void)[] = [];
 
 	constructor(leaf: WorkspaceLeaf, plugin: PkmRagPlugin) {
 		super(leaf);
@@ -60,10 +61,11 @@ export class RelatedNotesView extends ItemView {
 			const tagFilterEl = container.createDiv({
 				cls: "pkm-rag-related-tag-filter",
 			});
-			createTagFilter(tagFilterEl, allTags, (tags) => {
+			const { cleanup } = createTagFilter(tagFilterEl, allTags, (tags) => {
 				this.selectedTags = tags;
 				this.refresh();
 			});
+			this.cleanupFns.push(cleanup);
 		}
 
 		// Results container
@@ -75,6 +77,8 @@ export class RelatedNotesView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		for (const fn of this.cleanupFns) fn();
+		this.cleanupFns = [];
 		this.resultsContainer = null;
 	}
 

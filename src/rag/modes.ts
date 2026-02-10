@@ -2,6 +2,7 @@ import { VectorStore } from "../embedding/vectorStore";
 import { OllamaClient } from "../embedding/ollamaClient";
 import { PkmRagSettings } from "../settings";
 import { SourceInfo } from "../types";
+import { DEFAULTS } from "../constants";
 import { retrieveContext } from "./retrieval";
 import {
 	SYSTEM_PROMPT,
@@ -16,8 +17,13 @@ import {
 	formatStressTestPrompt,
 	formatRedundancyPrompt,
 } from "./prompts";
+import {
+	chatWithOptionalStreaming,
+	deduplicateSources,
+	formatSourceHeader,
+} from "./utils";
 
-interface ModeResult {
+export interface ModeResult {
 	answer: string;
 	sources: SourceInfo[];
 }
@@ -79,12 +85,9 @@ export async function runAskMode(
 		{ role: "user", content: prompt },
 	];
 
-	let answer: string;
-	if (onToken && settings.enableStreaming) {
-		answer = await ollamaClient.chatStream(messages, onToken);
-	} else {
-		answer = await ollamaClient.chat(messages);
-	}
+	const answer = await chatWithOptionalStreaming(
+		ollamaClient, messages, settings.enableStreaming, onToken
+	);
 
 	return { answer, sources };
 }
@@ -123,24 +126,11 @@ export async function runConnectMode(
 		{ role: "user", content: prompt },
 	];
 
-	let answer: string;
-	if (onToken && settings.enableStreaming) {
-		answer = await ollamaClient.chatStream(messages, onToken);
-	} else {
-		answer = await ollamaClient.chat(messages);
-	}
+	const answer = await chatWithOptionalStreaming(
+		ollamaClient, messages, settings.enableStreaming, onToken
+	);
 
-	// Deduplicate sources
-	const seen = new Set<string>();
-	const uniqueSources: SourceInfo[] = [];
-	for (const src of allSources) {
-		if (!seen.has(src.title)) {
-			seen.add(src.title);
-			uniqueSources.push(src);
-		}
-	}
-
-	return { answer, sources: uniqueSources };
+	return { answer, sources: deduplicateSources(allSources) };
 }
 
 /** Gap Analysis mode: Identify coverage gaps for a topic. */
@@ -174,12 +164,9 @@ export async function runGapMode(
 		{ role: "user", content: prompt },
 	];
 
-	let answer: string;
-	if (onToken && settings.enableStreaming) {
-		answer = await ollamaClient.chatStream(messages, onToken);
-	} else {
-		answer = await ollamaClient.chat(messages);
-	}
+	const answer = await chatWithOptionalStreaming(
+		ollamaClient, messages, settings.enableStreaming, onToken
+	);
 
 	return { answer, sources };
 }
@@ -230,10 +217,7 @@ export async function runDevilsAdvocateMode(
 		const relTitle = chunk.metadata.title || "Unknown";
 		const description = chunk.metadata.description || "";
 
-		let header = `[Source: ${relTitle}]`;
-		if (description) {
-			header += `\nDescription: ${description}`;
-		}
+		const header = formatSourceHeader(relTitle, description);
 		relatedParts.push(`${header}\n${chunk.text}`);
 
 		if (!seenTitles.has(relTitle)) {
@@ -253,12 +237,9 @@ export async function runDevilsAdvocateMode(
 		{ role: "user", content: prompt },
 	];
 
-	let answer: string;
-	if (onToken && settings.enableStreaming) {
-		answer = await ollamaClient.chatStream(messages, onToken);
-	} else {
-		answer = await ollamaClient.chat(messages);
-	}
+	const answer = await chatWithOptionalStreaming(
+		ollamaClient, messages, settings.enableStreaming, onToken
+	);
 
 	return { answer, sources };
 }
@@ -296,7 +277,7 @@ export async function runRedundancyMode(
 		excludeUuid = undefined;
 	}
 
-	// Search for similar notes with higher threshold (0.7+) for redundancy detection
+	// Search for similar notes with higher threshold for redundancy detection
 	const tagSet = filterTags && filterTags.length > 0 ? new Set(filterTags) : undefined;
 	const results = vectorStore.search(
 		queryEmbedding,
@@ -305,15 +286,13 @@ export async function runRedundancyMode(
 		tagSet
 	);
 
-	// Filter by 0.7+ threshold and build context
-	const REDUNDANCY_THRESHOLD = 0.7;
 	const similarParts: string[] = [];
 	const scores: string[] = [];
 	const sources: SourceInfo[] = [];
 	const seenTitles = new Set<string>();
 
 	for (const { chunk, similarity } of results) {
-		if (similarity < REDUNDANCY_THRESHOLD) continue;
+		if (similarity < DEFAULTS.REDUNDANCY_THRESHOLD) continue;
 
 		const title = chunk.metadata.title || "Unknown";
 		if (seenTitles.has(title)) continue;
@@ -322,10 +301,9 @@ export async function runRedundancyMode(
 		const score = Math.round(similarity * 1000) / 1000;
 		scores.push(`${title}: ${score}`);
 
-		let header = `[Source: ${title}] (Similarity: ${score})`;
-		if (chunk.metadata.description) {
-			header += `\nDescription: ${chunk.metadata.description}`;
-		}
+		const header = formatSourceHeader(title, chunk.metadata.description, {
+			similarity: score,
+		});
 		similarParts.push(`${header}\n${chunk.text}`);
 
 		sources.push({
@@ -357,12 +335,9 @@ export async function runRedundancyMode(
 		{ role: "user", content: prompt },
 	];
 
-	let answer: string;
-	if (onToken && settings.enableStreaming) {
-		answer = await ollamaClient.chatStream(messages, onToken);
-	} else {
-		answer = await ollamaClient.chat(messages);
-	}
+	const answer = await chatWithOptionalStreaming(
+		ollamaClient, messages, settings.enableStreaming, onToken
+	);
 
 	return { answer, sources };
 }

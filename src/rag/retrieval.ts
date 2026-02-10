@@ -1,6 +1,7 @@
 import { VectorStore } from "../embedding/vectorStore";
 import { OllamaClient } from "../embedding/ollamaClient";
 import { RetrievalResult, SimilarNote, SourceInfo } from "../types";
+import { formatSourceHeader } from "./utils";
 
 /**
  * Retrieve relevant context from the vector store via semantic search.
@@ -28,10 +29,9 @@ export async function retrieveContext(
 		const title = chunk.metadata.title || "Unknown";
 		const description = chunk.metadata.description || "";
 
-		let header = `[Source: ${title}]`;
-		if (description) {
-			header += ` | ${description}`;
-		}
+		const header = formatSourceHeader(title, description, {
+			descriptionSeparator: " | ",
+		});
 		contextParts.push(`${header}\n${chunk.text}`);
 
 		if (!seenTitles.has(title)) {

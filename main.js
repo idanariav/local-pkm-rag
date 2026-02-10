@@ -150,6 +150,7 @@ var DEFAULTS = {
   SIMILAR_TOP_K: 10,
   GAP_ANALYSIS_TOP_K: 15,
   ENABLE_QUERY_REWRITE: false,
+  REDUNDANCY_THRESHOLD: 0.7,
   CONTENT_MODE: "section",
   NOTES_SECTION_HEADER_NAME: "Notes",
   NOTES_SECTION_HEADER_LEVEL: 2,
@@ -367,28 +368,49 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
+  /** Helper for the common text-input setting pattern. */
+  addTextSetting(container, name, desc, placeholder, getValue, setValue) {
+    return new import_obsidian2.Setting(container).setName(name).setDesc(desc).addText(
+      (text3) => text3.setPlaceholder(placeholder).setValue(getValue()).onChange(async (value) => {
+        setValue(value);
+        await this.plugin.saveSettings();
+      })
+    );
+  }
   display() {
     var _a, _b, _c, _d;
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl("h3", { text: "Ollama Connection" });
-    new import_obsidian2.Setting(containerEl).setName("Ollama URL").setDesc("Base URL for the local Ollama instance").addText(
-      (text3) => text3.setPlaceholder("http://localhost:11434").setValue(this.plugin.settings.ollamaUrl).onChange(async (value) => {
-        this.plugin.settings.ollamaUrl = value;
-        await this.plugin.saveSettings();
-      })
+    this.addTextSetting(
+      containerEl,
+      "Ollama URL",
+      "Base URL for the local Ollama instance",
+      "http://localhost:11434",
+      () => this.plugin.settings.ollamaUrl,
+      (v) => {
+        this.plugin.settings.ollamaUrl = v;
+      }
     );
-    new import_obsidian2.Setting(containerEl).setName("Embedding model").setDesc("Ollama model for generating embeddings").addText(
-      (text3) => text3.setPlaceholder("nomic-embed-text").setValue(this.plugin.settings.embedModel).onChange(async (value) => {
-        this.plugin.settings.embedModel = value;
-        await this.plugin.saveSettings();
-      })
+    this.addTextSetting(
+      containerEl,
+      "Embedding model",
+      "Ollama model for generating embeddings",
+      "nomic-embed-text",
+      () => this.plugin.settings.embedModel,
+      (v) => {
+        this.plugin.settings.embedModel = v;
+      }
     );
-    new import_obsidian2.Setting(containerEl).setName("Chat model").setDesc("Ollama model for chat/generation").addText(
-      (text3) => text3.setPlaceholder("llama3.1:8b").setValue(this.plugin.settings.chatModel).onChange(async (value) => {
-        this.plugin.settings.chatModel = value;
-        await this.plugin.saveSettings();
-      })
+    this.addTextSetting(
+      containerEl,
+      "Chat model",
+      "Ollama model for chat/generation",
+      "llama3.1:8b",
+      () => this.plugin.settings.chatModel,
+      (v) => {
+        this.plugin.settings.chatModel = v;
+      }
     );
     new import_obsidian2.Setting(containerEl).setName("Embedding dimensions").setDesc("Vector dimensions for the embedding model").addText(
       (text3) => text3.setPlaceholder("768").setValue(String(this.plugin.settings.embedDimensions)).onChange(async (value) => {
@@ -427,11 +449,15 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
         this.renderFolderList(folderListEl);
       })
     );
-    new import_obsidian2.Setting(containerEl).setName("Excluded folders").setDesc("Comma-separated folder paths to exclude").addText(
-      (text3) => text3.setPlaceholder(".obsidian, .trash").setValue(this.plugin.settings.excludedFolders).onChange(async (value) => {
-        this.plugin.settings.excludedFolders = value;
-        await this.plugin.saveSettings();
-      })
+    this.addTextSetting(
+      containerEl,
+      "Excluded folders",
+      "Comma-separated folder paths to exclude",
+      ".obsidian, .trash",
+      () => this.plugin.settings.excludedFolders,
+      (v) => {
+        this.plugin.settings.excludedFolders = v;
+      }
     );
     new import_obsidian2.Setting(containerEl).setName("Embeddings folder path").setDesc("Folder to store the embeddings database (relative to vault root)").addText(
       (text3) => text3.setPlaceholder(".pkm-embeddings").setValue(this.plugin.settings.embeddingsFolderPath).onChange(async (value) => {
@@ -452,13 +478,15 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian2.Setting(containerEl).setName("Section header name").setDesc(
-      "Heading text to extract content from (only used in Section mode)"
-    ).addText(
-      (text3) => text3.setPlaceholder("Notes").setValue(this.plugin.settings.noteSectionHeaderName).onChange(async (value) => {
-        this.plugin.settings.noteSectionHeaderName = value;
-        await this.plugin.saveSettings();
-      })
+    this.addTextSetting(
+      containerEl,
+      "Section header name",
+      "Heading text to extract content from (only used in Section mode)",
+      "Notes",
+      () => this.plugin.settings.noteSectionHeaderName,
+      (v) => {
+        this.plugin.settings.noteSectionHeaderName = v;
+      }
     );
     new import_obsidian2.Setting(containerEl).setName("Section header level").setDesc(
       "Heading level to match (e.g. 2 = ##, 3 = ###)"
@@ -468,25 +496,35 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian2.Setting(containerEl).setName("Required frontmatter key").setDesc("Notes without this frontmatter key are skipped").addText(
-      (text3) => text3.setPlaceholder("UUID").setValue(this.plugin.settings.requiredFrontmatterKey).onChange(async (value) => {
-        this.plugin.settings.requiredFrontmatterKey = value;
-        await this.plugin.saveSettings();
-      })
+    this.addTextSetting(
+      containerEl,
+      "Required frontmatter key",
+      "Notes without this frontmatter key are skipped",
+      "UUID",
+      () => this.plugin.settings.requiredFrontmatterKey,
+      (v) => {
+        this.plugin.settings.requiredFrontmatterKey = v;
+      }
     );
-    new import_obsidian2.Setting(containerEl).setName("Modified field key").setDesc("Frontmatter key used for change detection").addText(
-      (text3) => text3.setPlaceholder("Modified").setValue(this.plugin.settings.modifiedFrontmatterKey).onChange(async (value) => {
-        this.plugin.settings.modifiedFrontmatterKey = value;
-        await this.plugin.saveSettings();
-      })
+    this.addTextSetting(
+      containerEl,
+      "Modified field key",
+      "Frontmatter key used for change detection",
+      "Modified",
+      () => this.plugin.settings.modifiedFrontmatterKey,
+      (v) => {
+        this.plugin.settings.modifiedFrontmatterKey = v;
+      }
     );
-    new import_obsidian2.Setting(containerEl).setName("Description field key").setDesc(
-      "Frontmatter key for the note description (prepended to chunks)"
-    ).addText(
-      (text3) => text3.setPlaceholder("Description").setValue(this.plugin.settings.descriptionFrontmatterKey).onChange(async (value) => {
-        this.plugin.settings.descriptionFrontmatterKey = value;
-        await this.plugin.saveSettings();
-      })
+    this.addTextSetting(
+      containerEl,
+      "Description field key",
+      "Frontmatter key for the note description (prepended to chunks)",
+      "Description",
+      () => this.plugin.settings.descriptionFrontmatterKey,
+      (v) => {
+        this.plugin.settings.descriptionFrontmatterKey = v;
+      }
     );
     containerEl.createEl("h3", { text: "Chunking" });
     new import_obsidian2.Setting(containerEl).setName("Chunk size").setDesc("Maximum characters per chunk (200-2000)").addSlider(
@@ -666,7 +704,7 @@ function cosineSimilarity(a, b) {
     normA += a[i] * a[i];
     normB += b[i] * b[i];
   }
-  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  const denom = Math.sqrt(normA * normB);
   return denom === 0 ? 0 : dot / denom;
 }
 var VectorStore = class {
@@ -853,9 +891,10 @@ var VectorStore = class {
   /**
    * Search for similar chunks by cosine similarity.
    * Returns top K results sorted by similarity descending.
+   * Uses a min-heap approach to avoid sorting all results.
    */
   search(queryEmbedding, topK, excludeUuids, filterTags) {
-    const results = [];
+    const heap = [];
     for (const chunk of this.chunks.values()) {
       if (excludeUuids && excludeUuids.has(chunk.metadata.uuid)) {
         continue;
@@ -867,10 +906,17 @@ var VectorStore = class {
         }
       }
       const similarity = cosineSimilarity(queryEmbedding, chunk.embedding);
-      results.push({ chunk, similarity });
+      if (heap.length < topK) {
+        heap.push({ chunk, similarity });
+        if (heap.length === topK) {
+          heap.sort((a, b) => a.similarity - b.similarity);
+        }
+      } else if (similarity > heap[0].similarity) {
+        heap[0] = { chunk, similarity };
+        heap.sort((a, b) => a.similarity - b.similarity);
+      }
     }
-    results.sort((a, b) => b.similarity - a.similarity);
-    return results.slice(0, topK);
+    return heap.sort((a, b) => b.similarity - a.similarity);
   }
   getFilePath(plugin) {
     if (this.embeddingsFolderPath) {
@@ -7519,14 +7565,8 @@ function splitMarkdownByHeadings(text3) {
 }
 
 // src/parser.ts
-var PROPERTY_WIKILINK_PATTERN = /\([A-Za-z]+::\s*\[\[(?:[^\]|]*\|)?([^\]]+)\]\]\)/g;
-var WIKILINK_PATTERN = /\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/g;
-var DATAVIEW_FIELD_PATTERN = /^\s*\w+::\s*/gm;
 var WIKILINK_TARGET_PATTERN = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g;
 var PROPERTY_WIKILINK_TARGET_PATTERN = /\([A-Za-z]+::\s*\[\[([^\]|]+)(?:\|[^\]]*)?\]\]\)/g;
-function extractSection(text3, headerName, headerLevel) {
-  return extractSectionByHeading(text3, headerName, headerLevel);
-}
 function extractFullContent(text3) {
   let content3 = text3;
   if (text3.startsWith("---")) {
@@ -7551,9 +7591,9 @@ function extractWikilinks(text3) {
   return Array.from(links).sort();
 }
 function cleanWikilinks(text3) {
-  let cleaned = text3.replace(PROPERTY_WIKILINK_PATTERN, "$1");
-  cleaned = cleaned.replace(WIKILINK_PATTERN, "$1");
-  cleaned = cleaned.replace(DATAVIEW_FIELD_PATTERN, "");
+  let cleaned = text3.replace(DEFAULTS.PROPERTY_WIKILINK_PATTERN, "$1");
+  cleaned = cleaned.replace(DEFAULTS.WIKILINK_PATTERN, "$1");
+  cleaned = cleaned.replace(DEFAULTS.DATAVIEW_FIELD_PATTERN, "");
   return cleaned;
 }
 function normalizeList(value) {
@@ -7575,7 +7615,7 @@ async function parseNote(file, app, settings) {
   const parse2 = resolveParseSettings(file.path, settings);
   let rawContent;
   if (parse2.contentMode === "section") {
-    rawContent = extractSection(text3, parse2.noteSectionHeaderName, parse2.noteSectionHeaderLevel);
+    rawContent = extractSectionByHeading(text3, parse2.noteSectionHeaderName, parse2.noteSectionHeaderLevel);
   } else {
     rawContent = extractFullContent(text3);
   }
@@ -7656,23 +7696,7 @@ var EmbedPipeline = class {
           continue;
         }
         seenUuids.add(note.uuid);
-        const existingModified = embeddedState.get(note.uuid);
-        if (existingModified === note.modified) {
-          stats.unchanged++;
-          continue;
-        }
-        if (existingModified !== void 0) {
-          this.vectorStore.deleteByUuid(note.uuid);
-          stats.updated++;
-        } else {
-          stats.new++;
-        }
-        const storedChunks = await this.chunkAndEmbed(note);
-        if (storedChunks.length === 0) {
-          stats.skipped++;
-          continue;
-        }
-        this.vectorStore.upsertChunks(storedChunks);
+        await this.processNote(note, embeddedState, stats);
       } catch (e) {
         console.error(`PKM RAG: Error processing ${file.path}`, e);
         stats.errors++;
@@ -7707,28 +7731,32 @@ var EmbedPipeline = class {
         return stats;
       }
       const embeddedState = this.vectorStore.getEmbeddedState();
-      const existingModified = embeddedState.get(note.uuid);
-      if (existingModified === note.modified) {
-        stats.unchanged++;
-        return stats;
-      }
-      if (existingModified !== void 0) {
-        this.vectorStore.deleteByUuid(note.uuid);
-        stats.updated++;
-      } else {
-        stats.new++;
-      }
-      const storedChunks = await this.chunkAndEmbed(note);
-      if (storedChunks.length === 0) {
-        stats.skipped++;
-        return stats;
-      }
-      this.vectorStore.upsertChunks(storedChunks);
+      await this.processNote(note, embeddedState, stats);
     } catch (e) {
       console.error(`PKM RAG: Error embedding ${file.path}`, e);
       stats.errors++;
     }
     return stats;
+  }
+  /** Check if a note needs embedding and process it. */
+  async processNote(note, embeddedState, stats) {
+    const existingModified = embeddedState.get(note.uuid);
+    if (existingModified === note.modified) {
+      stats.unchanged++;
+      return;
+    }
+    if (existingModified !== void 0) {
+      this.vectorStore.deleteByUuid(note.uuid);
+      stats.updated++;
+    } else {
+      stats.new++;
+    }
+    const storedChunks = await this.chunkAndEmbed(note);
+    if (storedChunks.length === 0) {
+      stats.skipped++;
+      return;
+    }
+    this.vectorStore.upsertChunks(storedChunks);
   }
   /** Chunk a note and generate embeddings for each chunk. */
   async chunkAndEmbed(note) {
@@ -7804,6 +7832,37 @@ ${note.content}`;
 // src/views/relatedNotesView.ts
 var import_obsidian4 = require("obsidian");
 
+// src/rag/utils.ts
+async function chatWithOptionalStreaming(ollamaClient, messages, enableStreaming, onToken) {
+  if (onToken && enableStreaming) {
+    return ollamaClient.chatStream(messages, onToken);
+  }
+  return ollamaClient.chat(messages);
+}
+function deduplicateSources(sources) {
+  const seen = /* @__PURE__ */ new Set();
+  const unique = [];
+  for (const src of sources) {
+    if (!seen.has(src.title)) {
+      seen.add(src.title);
+      unique.push(src);
+    }
+  }
+  return unique;
+}
+function formatSourceHeader(title, description, options) {
+  var _a;
+  let header = `[Source: ${title}]`;
+  if ((options == null ? void 0 : options.similarity) !== void 0) {
+    header += ` (Similarity: ${options.similarity})`;
+  }
+  if (description) {
+    const sep = (_a = options == null ? void 0 : options.descriptionSeparator) != null ? _a : "\n";
+    header += `${sep}Description: ${description}`;
+  }
+  return header;
+}
+
 // src/rag/retrieval.ts
 async function retrieveContext(query, vectorStore, ollamaClient, nResults, threshold, filterTags) {
   const queryEmbedding = await ollamaClient.embed(query);
@@ -7817,10 +7876,9 @@ async function retrieveContext(query, vectorStore, ollamaClient, nResults, thres
       continue;
     const title = chunk.metadata.title || "Unknown";
     const description = chunk.metadata.description || "";
-    let header = `[Source: ${title}]`;
-    if (description) {
-      header += ` | ${description}`;
-    }
+    const header = formatSourceHeader(title, description, {
+      descriptionSeparator: " | "
+    });
     contextParts.push(`${header}
 ${chunk.text}`);
     if (!seenTitles.has(title)) {
@@ -7899,6 +7957,7 @@ function findSimilarNotes(title, vectorStore, filterLinked, topK, threshold, fil
 
 // src/views/components.ts
 var import_obsidian3 = require("obsidian");
+var MAX_DROPDOWN_ITEMS = 20;
 function createSourcesEl(container, sources, app) {
   if (sources.length === 0)
     return;
@@ -7933,38 +7992,33 @@ function createSourcesEl(container, sources, app) {
 async function renderMarkdown(content3, container, app, component) {
   await import_obsidian3.MarkdownRenderer.render(app, content3, container, "", component);
 }
-function createTagFilter(container, tags, onChange) {
-  const wrapper = container.createDiv({ cls: "pkm-rag-tag-filter" });
-  wrapper.createEl("small", {
-    text: "Filter by tags",
-    cls: "pkm-rag-tag-filter-label"
-  });
+function createChipSelector(container, items, placeholder, onChange) {
   const selected = /* @__PURE__ */ new Set();
-  const chipsContainer = wrapper.createDiv({
+  const chipsContainer = container.createDiv({
     cls: "pkm-rag-chips-container"
   });
-  const searchInput = wrapper.createEl("input", {
+  const searchInput = container.createEl("input", {
     type: "text",
-    placeholder: "Search tags...",
+    placeholder,
     cls: "pkm-rag-note-search"
   });
-  const dropdown = wrapper.createDiv({
+  const dropdown = container.createDiv({
     cls: "pkm-rag-note-dropdown"
   });
   dropdown.style.display = "none";
   const renderChips = () => {
     chipsContainer.empty();
-    for (const tag of selected) {
+    for (const item of selected) {
       const chip = chipsContainer.createDiv({
         cls: "pkm-rag-chip"
       });
-      chip.createSpan({ text: tag });
+      chip.createSpan({ text: item });
       const removeBtn = chip.createEl("button", {
         text: "\xD7",
         cls: "pkm-rag-chip-remove"
       });
       removeBtn.addEventListener("click", () => {
-        selected.delete(tag);
+        selected.delete(item);
         renderChips();
         onChange(Array.from(selected));
       });
@@ -7972,7 +8026,7 @@ function createTagFilter(container, tags, onChange) {
   };
   const renderDropdown = (filter) => {
     dropdown.empty();
-    const filtered = tags.filter(
+    const filtered = items.filter(
       (t) => !selected.has(t) && t.toLowerCase().includes(filter.toLowerCase())
     );
     if (filtered.length === 0) {
@@ -7980,13 +8034,13 @@ function createTagFilter(container, tags, onChange) {
       return;
     }
     dropdown.style.display = "block";
-    for (const tag of filtered.slice(0, 20)) {
-      const item = dropdown.createDiv({
-        text: tag,
+    for (const item of filtered.slice(0, MAX_DROPDOWN_ITEMS)) {
+      const el = dropdown.createDiv({
+        text: item,
         cls: "pkm-rag-dropdown-item"
       });
-      item.addEventListener("click", () => {
-        selected.add(tag);
+      el.addEventListener("click", () => {
+        selected.add(item);
         searchInput.value = "";
         dropdown.style.display = "none";
         renderChips();
@@ -8000,133 +8054,81 @@ function createTagFilter(container, tags, onChange) {
   searchInput.addEventListener("focus", () => {
     renderDropdown(searchInput.value);
   });
-  document.addEventListener("click", (e) => {
-    if (!wrapper.contains(e.target)) {
+  const onClickOutside = (e) => {
+    if (!container.contains(e.target)) {
       dropdown.style.display = "none";
     }
+  };
+  document.addEventListener("click", onClickOutside);
+  return {
+    getSelected: () => Array.from(selected),
+    cleanup: () => document.removeEventListener("click", onClickOutside)
+  };
+}
+function createTagFilter(container, tags, onChange) {
+  const wrapper = container.createDiv({ cls: "pkm-rag-tag-filter" });
+  wrapper.createEl("small", {
+    text: "Filter by tags",
+    cls: "pkm-rag-tag-filter-label"
   });
+  const { cleanup } = createChipSelector(wrapper, tags, "Search tags...", onChange);
+  return { cleanup };
 }
 function createNoteSelector(container, titles, placeholder, multiple, onChange) {
   const wrapper = container.createDiv({ cls: "pkm-rag-note-selector" });
-  const selected = /* @__PURE__ */ new Set();
   if (multiple) {
-    const chipsContainer = wrapper.createDiv({
-      cls: "pkm-rag-chips-container"
-    });
-    const searchInput = wrapper.createEl("input", {
-      type: "text",
-      placeholder,
-      cls: "pkm-rag-note-search"
-    });
-    const dropdown = wrapper.createDiv({
-      cls: "pkm-rag-note-dropdown"
-    });
-    dropdown.style.display = "none";
-    const renderChips = () => {
-      chipsContainer.empty();
-      for (const title of selected) {
-        const chip = chipsContainer.createDiv({
-          cls: "pkm-rag-chip"
-        });
-        chip.createSpan({ text: title });
-        const removeBtn = chip.createEl("button", {
-          text: "\xD7",
-          cls: "pkm-rag-chip-remove"
-        });
-        removeBtn.addEventListener("click", () => {
-          selected.delete(title);
-          renderChips();
-          onChange(Array.from(selected));
-        });
-      }
-    };
-    const renderDropdown = (filter) => {
-      dropdown.empty();
-      const filtered = titles.filter(
-        (t) => !selected.has(t) && t.toLowerCase().includes(filter.toLowerCase())
-      );
-      if (filtered.length === 0) {
-        dropdown.style.display = "none";
-        return;
-      }
-      dropdown.style.display = "block";
-      for (const title of filtered.slice(0, 20)) {
-        const item = dropdown.createDiv({
-          text: title,
-          cls: "pkm-rag-dropdown-item"
-        });
-        item.addEventListener("click", () => {
-          selected.add(title);
-          searchInput.value = "";
-          dropdown.style.display = "none";
-          renderChips();
-          onChange(Array.from(selected));
-        });
-      }
-    };
-    searchInput.addEventListener("input", () => {
-      renderDropdown(searchInput.value);
-    });
-    searchInput.addEventListener("focus", () => {
-      renderDropdown(searchInput.value);
-    });
-    document.addEventListener("click", (e) => {
-      if (!wrapper.contains(e.target)) {
-        dropdown.style.display = "none";
-      }
-    });
-    return {
-      getSelected: () => Array.from(selected)
-    };
-  } else {
-    const searchInput = wrapper.createEl("input", {
-      type: "text",
-      placeholder,
-      cls: "pkm-rag-note-search"
-    });
-    const dropdown = wrapper.createDiv({
-      cls: "pkm-rag-note-dropdown"
-    });
-    dropdown.style.display = "none";
-    const renderDropdown = (filter) => {
-      dropdown.empty();
-      const filtered = titles.filter(
-        (t) => t.toLowerCase().includes(filter.toLowerCase())
-      );
-      if (filtered.length === 0) {
-        dropdown.style.display = "none";
-        return;
-      }
-      dropdown.style.display = "block";
-      for (const title of filtered.slice(0, 20)) {
-        const item = dropdown.createDiv({
-          text: title,
-          cls: "pkm-rag-dropdown-item"
-        });
-        item.addEventListener("click", () => {
-          selected.clear();
-          selected.add(title);
-          searchInput.value = title;
-          dropdown.style.display = "none";
-          onChange([title]);
-        });
-      }
-    };
-    searchInput.addEventListener("input", () => {
-      renderDropdown(searchInput.value);
-    });
-    searchInput.addEventListener("focus", () => {
-      renderDropdown(searchInput.value);
-    });
-    document.addEventListener("click", (e) => {
-      if (!wrapper.contains(e.target)) {
-        dropdown.style.display = "none";
-      }
-    });
-    return {
-      getSelected: () => Array.from(selected)
-    };
+    return createChipSelector(wrapper, titles, placeholder, onChange);
   }
+  const selected = /* @__PURE__ */ new Set();
+  const searchInput = wrapper.createEl("input", {
+    type: "text",
+    placeholder,
+    cls: "pkm-rag-note-search"
+  });
+  const dropdown = wrapper.createDiv({
+    cls: "pkm-rag-note-dropdown"
+  });
+  dropdown.style.display = "none";
+  const renderDropdown = (filter) => {
+    dropdown.empty();
+    const filtered = titles.filter(
+      (t) => t.toLowerCase().includes(filter.toLowerCase())
+    );
+    if (filtered.length === 0) {
+      dropdown.style.display = "none";
+      return;
+    }
+    dropdown.style.display = "block";
+    for (const title of filtered.slice(0, MAX_DROPDOWN_ITEMS)) {
+      const item = dropdown.createDiv({
+        text: title,
+        cls: "pkm-rag-dropdown-item"
+      });
+      item.addEventListener("click", () => {
+        selected.clear();
+        selected.add(title);
+        searchInput.value = title;
+        dropdown.style.display = "none";
+        onChange([title]);
+      });
+    }
+  };
+  searchInput.addEventListener("input", () => {
+    renderDropdown(searchInput.value);
+  });
+  searchInput.addEventListener("focus", () => {
+    renderDropdown(searchInput.value);
+  });
+  const onClickOutside = (e) => {
+    if (!wrapper.contains(e.target)) {
+      dropdown.style.display = "none";
+    }
+  };
+  document.addEventListener("click", onClickOutside);
+  return {
+    getSelected: () => Array.from(selected),
+    cleanup: () => document.removeEventListener("click", onClickOutside)
+  };
 }
 
 // src/views/relatedNotesView.ts
@@ -8136,6 +8138,7 @@ var RelatedNotesView = class extends import_obsidian4.ItemView {
     super(leaf);
     this.selectedTags = [];
     this.resultsContainer = null;
+    this.cleanupFns = [];
     this.plugin = plugin;
     this.filterLinked = plugin.settings.filterLinkedByDefault;
   }
@@ -8173,10 +8176,11 @@ var RelatedNotesView = class extends import_obsidian4.ItemView {
       const tagFilterEl = container.createDiv({
         cls: "pkm-rag-related-tag-filter"
       });
-      createTagFilter(tagFilterEl, allTags, (tags) => {
+      const { cleanup } = createTagFilter(tagFilterEl, allTags, (tags) => {
         this.selectedTags = tags;
         this.refresh();
       });
+      this.cleanupFns.push(cleanup);
     }
     this.resultsContainer = container.createDiv({
       cls: "pkm-rag-related-results"
@@ -8184,6 +8188,9 @@ var RelatedNotesView = class extends import_obsidian4.ItemView {
     await this.refresh();
   }
   async onClose() {
+    for (const fn of this.cleanupFns)
+      fn();
+    this.cleanupFns = [];
     this.resultsContainer = null;
   }
   async refresh() {
@@ -8287,10 +8294,32 @@ RULES:
 - When referencing information, cite the source note title in brackets like [Note Title].
 - Do not fabricate information or use external knowledge.
 - If multiple notes discuss the topic, synthesize them and cite each.`;
-var EXPLORE_SYSTEM_PROMPT = "You are a knowledge assistant that finds connections between concepts using ONLY the provided context from personal notes.\n\nRULES:\n- Use ONLY the provided context. Do not use external knowledge.\n- Identify shared themes, tensions, complementary ideas, or causal links.\n- Cite source notes in [brackets].\n- If the context shows no meaningful connection, say so honestly.";
-var GAP_SYSTEM_PROMPT = "You are a knowledge analyst reviewing personal notes on a topic.\n\nRULES:\n- Analyze ONLY the provided context.\n- Identify what sub-topics, perspectives, or counterarguments seem absent or underrepresented.\n- Distinguish between 'not covered' and 'briefly mentioned'.\n- Cite existing notes in [brackets] when referencing what IS covered.\n- Be specific about what's missing \u2014 don't just say 'more depth needed'.";
-var STRESS_TEST_SYSTEM_PROMPT = "You are a critical thinking partner analyzing personal notes.\n\nRULES:\n- Use ONLY the provided context from notes.\n- Identify logical weaknesses, unstated assumptions, or tensions within and between the notes.\n- Steelman the opposing viewpoint using evidence from other notes when available.\n- Be constructive \u2014 the goal is to strengthen understanding, not dismiss.\n- Cite source notes in [brackets].";
-var QUERY_REWRITE_PROMPT = "Rewrite the following question to improve semantic search retrieval over a personal knowledge base. Add related terms, synonyms, and rephrasings that would help find relevant notes. Return ONLY the rewritten query, nothing else.\n\nOriginal question: {question}";
+var EXPLORE_SYSTEM_PROMPT = `You are a knowledge assistant that finds connections between concepts using ONLY the provided context from personal notes.
+
+RULES:
+- Use ONLY the provided context. Do not use external knowledge.
+- Identify shared themes, tensions, complementary ideas, or causal links.
+- Cite source notes in [brackets].
+- If the context shows no meaningful connection, say so honestly.`;
+var GAP_SYSTEM_PROMPT = `You are a knowledge analyst reviewing personal notes on a topic.
+
+RULES:
+- Analyze ONLY the provided context.
+- Identify what sub-topics, perspectives, or counterarguments seem absent or underrepresented.
+- Distinguish between 'not covered' and 'briefly mentioned'.
+- Cite existing notes in [brackets] when referencing what IS covered.
+- Be specific about what's missing \u2014 don't just say 'more depth needed'.`;
+var STRESS_TEST_SYSTEM_PROMPT = `You are a critical thinking partner analyzing personal notes.
+
+RULES:
+- Use ONLY the provided context from notes.
+- Identify logical weaknesses, unstated assumptions, or tensions within and between the notes.
+- Steelman the opposing viewpoint using evidence from other notes when available.
+- Be constructive \u2014 the goal is to strengthen understanding, not dismiss.
+- Cite source notes in [brackets].`;
+var QUERY_REWRITE_PROMPT = `Rewrite the following question to improve semantic search retrieval over a personal knowledge base. Add related terms, synonyms, and rephrasings that would help find relevant notes. Return ONLY the rewritten query, nothing else.
+
+Original question: {question}`;
 function formatRagPrompt(context, question) {
   return `CONTEXT FROM NOTES:
 ${context}
@@ -8341,6 +8370,42 @@ ${relatedContext}
 Cite source notes in [brackets].`;
   return prompt;
 }
+var REDUNDANCY_SYSTEM_PROMPT = `You are a knowledge management assistant analyzing note redundancy.
+
+RULES:
+- Analyze ONLY the provided context from existing notes.
+- Determine if the target content is redundant with existing notes.
+- Distinguish between:
+  * REDUNDANT: Highly overlapping content, merging recommended
+  * PARTIAL: Some overlap but distinct perspectives, consider consolidation
+  * COMPLEMENTARY: Related but different focus, keep separate
+- For each similar note, explain WHAT overlaps and WHAT is unique.
+- Consider similarity scores as confidence indicators (0.7-0.8 = moderate, 0.8+ = high).
+- Provide a clear verdict and actionable recommendation.
+- Cite notes in [brackets].`;
+function formatRedundancyPrompt(targetContent, targetType, similarNotesContext, similarityScores) {
+  const targetLabel = targetType === "note" ? "EXISTING NOTE" : "PROPOSED IDEA";
+  return `${targetLabel}:
+${targetContent}
+
+SIMILARITY SCORES:
+${similarityScores}
+
+SIMILAR NOTES:
+${similarNotesContext}
+
+Analyze whether the ${targetType === "note" ? "existing note" : "proposed idea"} is redundant with the similar notes shown above.
+For each similar note:
+1. Explain what content overlaps
+2. Explain what is unique or different
+3. Assess the degree of redundancy
+
+Then provide:
+- VERDICT: Redundant / Partial Overlap / Unique
+- RECOMMENDATION: Clear action (merge with specific note, keep separate, expand existing note, etc.)
+
+Cite source notes in [brackets].`;
+}
 
 // src/rag/modes.ts
 async function rewriteQuery(question, ollamaClient) {
@@ -8381,12 +8446,12 @@ async function runAskMode(question, vectorStore, ollamaClient, settings, onToken
     { role: "system", content: SYSTEM_PROMPT },
     { role: "user", content: prompt }
   ];
-  let answer;
-  if (onToken && settings.enableStreaming) {
-    answer = await ollamaClient.chatStream(messages, onToken);
-  } else {
-    answer = await ollamaClient.chat(messages);
-  }
+  const answer = await chatWithOptionalStreaming(
+    ollamaClient,
+    messages,
+    settings.enableStreaming,
+    onToken
+  );
   return { answer, sources };
 }
 async function runConnectMode(selectedNotes, vectorStore, ollamaClient, settings, onToken, filterTags) {
@@ -8412,21 +8477,13 @@ async function runConnectMode(selectedNotes, vectorStore, ollamaClient, settings
     { role: "system", content: EXPLORE_SYSTEM_PROMPT },
     { role: "user", content: prompt }
   ];
-  let answer;
-  if (onToken && settings.enableStreaming) {
-    answer = await ollamaClient.chatStream(messages, onToken);
-  } else {
-    answer = await ollamaClient.chat(messages);
-  }
-  const seen = /* @__PURE__ */ new Set();
-  const uniqueSources = [];
-  for (const src of allSources) {
-    if (!seen.has(src.title)) {
-      seen.add(src.title);
-      uniqueSources.push(src);
-    }
-  }
-  return { answer, sources: uniqueSources };
+  const answer = await chatWithOptionalStreaming(
+    ollamaClient,
+    messages,
+    settings.enableStreaming,
+    onToken
+  );
+  return { answer, sources: deduplicateSources(allSources) };
 }
 async function runGapMode(topic, vectorStore, ollamaClient, settings, onToken, filterTags) {
   const { formattedContext, sources } = await retrieveContext(
@@ -8448,12 +8505,12 @@ async function runGapMode(topic, vectorStore, ollamaClient, settings, onToken, f
     { role: "system", content: GAP_SYSTEM_PROMPT },
     { role: "user", content: prompt }
   ];
-  let answer;
-  if (onToken && settings.enableStreaming) {
-    answer = await ollamaClient.chatStream(messages, onToken);
-  } else {
-    answer = await ollamaClient.chat(messages);
-  }
+  const answer = await chatWithOptionalStreaming(
+    ollamaClient,
+    messages,
+    settings.enableStreaming,
+    onToken
+  );
   return { answer, sources };
 }
 async function runDevilsAdvocateMode(title, vectorStore, ollamaClient, settings, onToken, filterTags) {
@@ -8487,11 +8544,7 @@ async function runDevilsAdvocateMode(title, vectorStore, ollamaClient, settings,
       continue;
     const relTitle = chunk.metadata.title || "Unknown";
     const description = chunk.metadata.description || "";
-    let header = `[Source: ${relTitle}]`;
-    if (description) {
-      header += `
-Description: ${description}`;
-    }
+    const header = formatSourceHeader(relTitle, description);
     relatedParts.push(`${header}
 ${chunk.text}`);
     if (!seenTitles.has(relTitle)) {
@@ -8509,12 +8562,89 @@ ${chunk.text}`);
     { role: "system", content: STRESS_TEST_SYSTEM_PROMPT },
     { role: "user", content: prompt }
   ];
-  let answer;
-  if (onToken && settings.enableStreaming) {
-    answer = await ollamaClient.chatStream(messages, onToken);
+  const answer = await chatWithOptionalStreaming(
+    ollamaClient,
+    messages,
+    settings.enableStreaming,
+    onToken
+  );
+  return { answer, sources };
+}
+async function runRedundancyMode(input, inputType, vectorStore, ollamaClient, settings, onToken, filterTags) {
+  let queryEmbedding;
+  let targetContent;
+  let excludeUuid;
+  if (inputType === "note") {
+    const chunks = vectorStore.getChunksByTitle(input);
+    if (chunks.length === 0) {
+      return {
+        answer: `No note found with title "${input}".`,
+        sources: []
+      };
+    }
+    queryEmbedding = chunks[0].embedding;
+    targetContent = chunks.map((c) => c.text).join("\n\n");
+    excludeUuid = chunks[0].metadata.uuid;
   } else {
-    answer = await ollamaClient.chat(messages);
+    queryEmbedding = await ollamaClient.embed(input);
+    targetContent = input;
+    excludeUuid = void 0;
   }
+  const tagSet = filterTags && filterTags.length > 0 ? new Set(filterTags) : void 0;
+  const results = vectorStore.search(
+    queryEmbedding,
+    settings.similarTopK,
+    excludeUuid ? /* @__PURE__ */ new Set([excludeUuid]) : void 0,
+    tagSet
+  );
+  const similarParts = [];
+  const scores = [];
+  const sources = [];
+  const seenTitles = /* @__PURE__ */ new Set();
+  for (const { chunk, similarity } of results) {
+    if (similarity < DEFAULTS.REDUNDANCY_THRESHOLD)
+      continue;
+    const title = chunk.metadata.title || "Unknown";
+    if (seenTitles.has(title))
+      continue;
+    seenTitles.add(title);
+    const score = Math.round(similarity * 1e3) / 1e3;
+    scores.push(`${title}: ${score}`);
+    const header = formatSourceHeader(title, chunk.metadata.description, {
+      similarity: score
+    });
+    similarParts.push(`${header}
+${chunk.text}`);
+    sources.push({
+      title,
+      description: chunk.metadata.description || "",
+      filePath: chunk.metadata.filePath
+    });
+  }
+  if (similarParts.length === 0) {
+    return {
+      answer: `No similar notes found. This ${inputType === "note" ? "note" : "idea"} appears unique.`,
+      sources: []
+    };
+  }
+  const similarContext = similarParts.join("\n\n---\n\n");
+  const scoresText = scores.join("\n");
+  const prompt = formatRedundancyPrompt(
+    targetContent,
+    inputType,
+    similarContext,
+    scoresText
+  );
+  const messages = [
+    { role: "system", content: REDUNDANCY_SYSTEM_PROMPT },
+    { role: "user", content: prompt }
+  ];
+  const answer = await chatWithOptionalStreaming(
+    ollamaClient,
+    messages,
+    settings.enableStreaming,
+    onToken
+  );
   return { answer, sources };
 }
 
@@ -8535,6 +8665,9 @@ var ChatView = class extends import_obsidian5.ItemView {
     // Mode-specific state
     this.selectedNotes = [];
     this.selectedTags = [];
+    this.redundancyInputType = "note";
+    this.cleanupFns = [];
+    this.modeConfigCleanupFns = [];
     this.plugin = plugin;
   }
   getViewType() {
@@ -8558,7 +8691,8 @@ var ChatView = class extends import_obsidian5.ItemView {
       { value: "ask", label: "Ask" },
       { value: "connect", label: "Connect" },
       { value: "gap", label: "Gap Analysis" },
-      { value: "devils_advocate", label: "Devil's Advocate" }
+      { value: "devils_advocate", label: "Devil's Advocate" },
+      { value: "redundancy", label: "Redundancy Check" }
     ];
     for (const mode of modes) {
       modeSelect.createEl("option", {
@@ -8587,9 +8721,10 @@ var ChatView = class extends import_obsidian5.ItemView {
     });
     const allTags = this.plugin.vectorStore.getAllTags();
     if (allTags.length > 0) {
-      createTagFilter(tagFilterEl, allTags, (tags) => {
+      const { cleanup } = createTagFilter(tagFilterEl, allTags, (tags) => {
         this.selectedTags = tags;
       });
+      this.cleanupFns.push(cleanup);
     }
     this.modeConfigEl = container.createDiv({
       cls: "pkm-rag-chat-mode-config"
@@ -8604,6 +8739,12 @@ var ChatView = class extends import_obsidian5.ItemView {
     this.renderInputArea();
   }
   async onClose() {
+    for (const fn of this.cleanupFns)
+      fn();
+    this.cleanupFns = [];
+    for (const fn of this.modeConfigCleanupFns)
+      fn();
+    this.modeConfigCleanupFns = [];
     this.modeConfigEl = null;
     this.messagesEl = null;
     this.inputArea = null;
@@ -8613,6 +8754,9 @@ var ChatView = class extends import_obsidian5.ItemView {
   renderModeConfig() {
     if (!this.modeConfigEl)
       return;
+    for (const fn of this.modeConfigCleanupFns)
+      fn();
+    this.modeConfigCleanupFns = [];
     this.modeConfigEl.empty();
     const titles = this.plugin.vectorStore.getAllTitles();
     switch (this.currentMode) {
@@ -8630,7 +8774,7 @@ var ChatView = class extends import_obsidian5.ItemView {
           text: "Select 2+ notes to discover how they relate.",
           cls: "pkm-rag-mode-tip"
         });
-        createNoteSelector(
+        const { cleanup } = createNoteSelector(
           this.modeConfigEl,
           titles,
           "Search notes...",
@@ -8639,6 +8783,7 @@ var ChatView = class extends import_obsidian5.ItemView {
             this.selectedNotes = selected;
           }
         );
+        this.modeConfigCleanupFns.push(cleanup);
         break;
       }
       case "gap": {
@@ -8653,7 +8798,7 @@ var ChatView = class extends import_obsidian5.ItemView {
           text: "Select a note to challenge its reasoning.",
           cls: "pkm-rag-mode-tip"
         });
-        createNoteSelector(
+        const { cleanup } = createNoteSelector(
           this.modeConfigEl,
           titles,
           "Search for a note...",
@@ -8662,6 +8807,57 @@ var ChatView = class extends import_obsidian5.ItemView {
             this.selectedNotes = selected;
           }
         );
+        this.modeConfigCleanupFns.push(cleanup);
+        break;
+      }
+      case "redundancy": {
+        this.modeConfigEl.createEl("small", {
+          text: "Check if a note or idea is redundant with existing notes.",
+          cls: "pkm-rag-mode-tip"
+        });
+        const typeSelector = this.modeConfigEl.createDiv({
+          cls: "pkm-rag-redundancy-type"
+        });
+        const noteRadioWrapper = typeSelector.createDiv({ cls: "pkm-rag-radio-wrapper" });
+        const noteRadio = noteRadioWrapper.createEl("input", {
+          type: "radio",
+          attr: { name: "redundancy-type", id: "redundancy-note" }
+        });
+        noteRadio.checked = this.redundancyInputType === "note";
+        noteRadioWrapper.createEl("label", {
+          text: "Check existing note",
+          attr: { for: "redundancy-note" }
+        });
+        const ideaRadioWrapper = typeSelector.createDiv({ cls: "pkm-rag-radio-wrapper" });
+        const ideaRadio = ideaRadioWrapper.createEl("input", {
+          type: "radio",
+          attr: { name: "redundancy-type", id: "redundancy-idea" }
+        });
+        ideaRadio.checked = this.redundancyInputType === "idea";
+        ideaRadioWrapper.createEl("label", {
+          text: "Check new idea",
+          attr: { for: "redundancy-idea" }
+        });
+        noteRadio.addEventListener("change", () => {
+          this.redundancyInputType = "note";
+          this.renderModeConfig();
+        });
+        ideaRadio.addEventListener("change", () => {
+          this.redundancyInputType = "idea";
+          this.renderModeConfig();
+        });
+        if (this.redundancyInputType === "note") {
+          const { cleanup } = createNoteSelector(
+            this.modeConfigEl,
+            titles,
+            "Search for a note...",
+            false,
+            (selected) => {
+              this.selectedNotes = selected;
+            }
+          );
+          this.modeConfigCleanupFns.push(cleanup);
+        }
         break;
       }
     }
@@ -8671,7 +8867,7 @@ var ChatView = class extends import_obsidian5.ItemView {
     if (!this.inputArea)
       return;
     this.inputArea.empty();
-    const showTextInput = this.currentMode === "ask" || this.currentMode === "gap";
+    const showTextInput = this.currentMode === "ask" || this.currentMode === "gap" || this.currentMode === "redundancy" && this.redundancyInputType === "idea";
     if (showTextInput) {
       this.textInput = this.inputArea.createEl("textarea", {
         placeholder: this.getInputPlaceholder(),
@@ -8697,6 +8893,8 @@ var ChatView = class extends import_obsidian5.ItemView {
         return "Ask about your notes...";
       case "gap":
         return "Enter a topic...";
+      case "redundancy":
+        return "Describe the note you want to create...";
       default:
         return "";
     }
@@ -8711,10 +8909,12 @@ var ChatView = class extends import_obsidian5.ItemView {
         return "Analyze";
       case "devils_advocate":
         return "Challenge";
+      case "redundancy":
+        return "Check";
     }
   }
   async onSend() {
-    var _a, _b;
+    var _a, _b, _c, _d;
     if (this.isProcessing)
       return;
     let userContent = "";
@@ -8743,6 +8943,23 @@ var ChatView = class extends import_obsidian5.ItemView {
           return;
         }
         userContent = `Challenge: ${this.selectedNotes[0]}`;
+        break;
+      }
+      case "redundancy": {
+        if (this.redundancyInputType === "note") {
+          if (this.selectedNotes.length === 0) {
+            this.addSystemMessage("Please select a note.");
+            return;
+          }
+          userContent = `Check redundancy: ${this.selectedNotes[0]}`;
+        } else {
+          const text3 = (_d = (_c = this.textInput) == null ? void 0 : _c.value) == null ? void 0 : _d.trim();
+          if (!text3)
+            return;
+          userContent = `Check idea: ${text3}`;
+          if (this.textInput)
+            this.textInput.value = "";
+        }
         break;
       }
     }
@@ -8808,6 +9025,17 @@ var ChatView = class extends import_obsidian5.ItemView {
         case "devils_advocate":
           result = await runDevilsAdvocateMode(
             this.selectedNotes[0],
+            this.plugin.vectorStore,
+            this.plugin.ollamaClient,
+            this.plugin.settings,
+            onToken,
+            tags
+          );
+          break;
+        case "redundancy":
+          result = await runRedundancyMode(
+            this.redundancyInputType === "note" ? this.selectedNotes[0] : userContent.replace("Check idea: ", ""),
+            this.redundancyInputType,
             this.plugin.vectorStore,
             this.plugin.ollamaClient,
             this.plugin.settings,

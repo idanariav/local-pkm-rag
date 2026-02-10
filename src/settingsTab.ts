@@ -10,6 +10,29 @@ export class PkmRagSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
+	/** Helper for the common text-input setting pattern. */
+	private addTextSetting(
+		container: HTMLElement,
+		name: string,
+		desc: string,
+		placeholder: string,
+		getValue: () => string,
+		setValue: (v: string) => void
+	): Setting {
+		return new Setting(container)
+			.setName(name)
+			.setDesc(desc)
+			.addText((text) =>
+				text
+					.setPlaceholder(placeholder)
+					.setValue(getValue())
+					.onChange(async (value) => {
+						setValue(value);
+						await this.plugin.saveSettings();
+					})
+			);
+	}
+
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
@@ -17,44 +40,20 @@ export class PkmRagSettingTab extends PluginSettingTab {
 		// --- Ollama Connection ---
 		containerEl.createEl("h3", { text: "Ollama Connection" });
 
-		new Setting(containerEl)
-			.setName("Ollama URL")
-			.setDesc("Base URL for the local Ollama instance")
-			.addText((text) =>
-				text
-					.setPlaceholder("http://localhost:11434")
-					.setValue(this.plugin.settings.ollamaUrl)
-					.onChange(async (value) => {
-						this.plugin.settings.ollamaUrl = value;
-						await this.plugin.saveSettings();
-					})
-			);
+		this.addTextSetting(containerEl, "Ollama URL", "Base URL for the local Ollama instance",
+			"http://localhost:11434",
+			() => this.plugin.settings.ollamaUrl,
+			(v) => { this.plugin.settings.ollamaUrl = v; });
 
-		new Setting(containerEl)
-			.setName("Embedding model")
-			.setDesc("Ollama model for generating embeddings")
-			.addText((text) =>
-				text
-					.setPlaceholder("nomic-embed-text")
-					.setValue(this.plugin.settings.embedModel)
-					.onChange(async (value) => {
-						this.plugin.settings.embedModel = value;
-						await this.plugin.saveSettings();
-					})
-			);
+		this.addTextSetting(containerEl, "Embedding model", "Ollama model for generating embeddings",
+			"nomic-embed-text",
+			() => this.plugin.settings.embedModel,
+			(v) => { this.plugin.settings.embedModel = v; });
 
-		new Setting(containerEl)
-			.setName("Chat model")
-			.setDesc("Ollama model for chat/generation")
-			.addText((text) =>
-				text
-					.setPlaceholder("llama3.1:8b")
-					.setValue(this.plugin.settings.chatModel)
-					.onChange(async (value) => {
-						this.plugin.settings.chatModel = value;
-						await this.plugin.saveSettings();
-					})
-			);
+		this.addTextSetting(containerEl, "Chat model", "Ollama model for chat/generation",
+			"llama3.1:8b",
+			() => this.plugin.settings.chatModel,
+			(v) => { this.plugin.settings.chatModel = v; });
 
 		new Setting(containerEl)
 			.setName("Embedding dimensions")
@@ -112,18 +111,10 @@ export class PkmRagSettingTab extends PluginSettingTab {
 				})
 			);
 
-		new Setting(containerEl)
-			.setName("Excluded folders")
-			.setDesc("Comma-separated folder paths to exclude")
-			.addText((text) =>
-				text
-					.setPlaceholder(".obsidian, .trash")
-					.setValue(this.plugin.settings.excludedFolders)
-					.onChange(async (value) => {
-						this.plugin.settings.excludedFolders = value;
-						await this.plugin.saveSettings();
-					})
-			);
+		this.addTextSetting(containerEl, "Excluded folders", "Comma-separated folder paths to exclude",
+			".obsidian, .trash",
+			() => this.plugin.settings.excludedFolders,
+			(v) => { this.plugin.settings.excludedFolders = v; });
 
 		new Setting(containerEl)
 			.setName("Embeddings folder path")
@@ -164,20 +155,11 @@ export class PkmRagSettingTab extends PluginSettingTab {
 					})
 			);
 
-		new Setting(containerEl)
-			.setName("Section header name")
-			.setDesc(
-				"Heading text to extract content from (only used in Section mode)"
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("Notes")
-					.setValue(this.plugin.settings.noteSectionHeaderName)
-					.onChange(async (value) => {
-						this.plugin.settings.noteSectionHeaderName = value;
-						await this.plugin.saveSettings();
-					})
-			);
+		this.addTextSetting(containerEl, "Section header name",
+			"Heading text to extract content from (only used in Section mode)",
+			"Notes",
+			() => this.plugin.settings.noteSectionHeaderName,
+			(v) => { this.plugin.settings.noteSectionHeaderName = v; });
 
 		new Setting(containerEl)
 			.setName("Section header level")
@@ -199,46 +181,23 @@ export class PkmRagSettingTab extends PluginSettingTab {
 					})
 			);
 
-		new Setting(containerEl)
-			.setName("Required frontmatter key")
-			.setDesc("Notes without this frontmatter key are skipped")
-			.addText((text) =>
-				text
-					.setPlaceholder("UUID")
-					.setValue(this.plugin.settings.requiredFrontmatterKey)
-					.onChange(async (value) => {
-						this.plugin.settings.requiredFrontmatterKey = value;
-						await this.plugin.saveSettings();
-					})
-			);
+		this.addTextSetting(containerEl, "Required frontmatter key",
+			"Notes without this frontmatter key are skipped",
+			"UUID",
+			() => this.plugin.settings.requiredFrontmatterKey,
+			(v) => { this.plugin.settings.requiredFrontmatterKey = v; });
 
-		new Setting(containerEl)
-			.setName("Modified field key")
-			.setDesc("Frontmatter key used for change detection")
-			.addText((text) =>
-				text
-					.setPlaceholder("Modified")
-					.setValue(this.plugin.settings.modifiedFrontmatterKey)
-					.onChange(async (value) => {
-						this.plugin.settings.modifiedFrontmatterKey = value;
-						await this.plugin.saveSettings();
-					})
-			);
+		this.addTextSetting(containerEl, "Modified field key",
+			"Frontmatter key used for change detection",
+			"Modified",
+			() => this.plugin.settings.modifiedFrontmatterKey,
+			(v) => { this.plugin.settings.modifiedFrontmatterKey = v; });
 
-		new Setting(containerEl)
-			.setName("Description field key")
-			.setDesc(
-				"Frontmatter key for the note description (prepended to chunks)"
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("Description")
-					.setValue(this.plugin.settings.descriptionFrontmatterKey)
-					.onChange(async (value) => {
-						this.plugin.settings.descriptionFrontmatterKey = value;
-						await this.plugin.saveSettings();
-					})
-			);
+		this.addTextSetting(containerEl, "Description field key",
+			"Frontmatter key for the note description (prepended to chunks)",
+			"Description",
+			() => this.plugin.settings.descriptionFrontmatterKey,
+			(v) => { this.plugin.settings.descriptionFrontmatterKey = v; });
 
 		// --- Chunking ---
 		containerEl.createEl("h3", { text: "Chunking" });

@@ -23,12 +23,6 @@ export interface ChunkMetadata {
 	filePath: string;
 }
 
-export interface NoteChunk {
-	id: string;
-	text: string;
-	metadata: ChunkMetadata;
-}
-
 export interface StoredChunk {
 	id: string;
 	embedding: number[];

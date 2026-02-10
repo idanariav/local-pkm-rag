@@ -4,7 +4,7 @@ import { OllamaClient } from "./ollamaClient";
 import { RecursiveCharacterTextSplitter } from "./chunker";
 import { parseNote } from "../parser";
 import { PkmRagSettings } from "../settings";
-import { StoredChunk, EmbedStats, NoteChunk, ParsedNote } from "../types";
+import { StoredChunk, EmbedStats, ParsedNote } from "../types";
 import { DEFAULTS } from "../constants";
 import { splitMarkdownByHeadings } from "../markdownParser";
 
@@ -84,27 +84,7 @@ export class EmbedPipeline {
 				}
 
 				seenUuids.add(note.uuid);
-
-				const existingModified = embeddedState.get(note.uuid);
-				if (existingModified === note.modified) {
-					stats.unchanged++;
-					continue;
-				}
-
-				if (existingModified !== undefined) {
-					this.vectorStore.deleteByUuid(note.uuid);
-					stats.updated++;
-				} else {
-					stats.new++;
-				}
-
-				const storedChunks = await this.chunkAndEmbed(note);
-				if (storedChunks.length === 0) {
-					stats.skipped++;
-					continue;
-				}
-
-				this.vectorStore.upsertChunks(storedChunks);
+				await this.processNote(note, embeddedState, stats);
 			} catch (e) {
 				console.error(`PKM RAG: Error processing ${file.path}`, e);
 				stats.errors++;
@@ -145,33 +125,41 @@ export class EmbedPipeline {
 			}
 
 			const embeddedState = this.vectorStore.getEmbeddedState();
-			const existingModified = embeddedState.get(note.uuid);
-
-			if (existingModified === note.modified) {
-				stats.unchanged++;
-				return stats;
-			}
-
-			if (existingModified !== undefined) {
-				this.vectorStore.deleteByUuid(note.uuid);
-				stats.updated++;
-			} else {
-				stats.new++;
-			}
-
-			const storedChunks = await this.chunkAndEmbed(note);
-			if (storedChunks.length === 0) {
-				stats.skipped++;
-				return stats;
-			}
-
-			this.vectorStore.upsertChunks(storedChunks);
+			await this.processNote(note, embeddedState, stats);
 		} catch (e) {
 			console.error(`PKM RAG: Error embedding ${file.path}`, e);
 			stats.errors++;
 		}
 
 		return stats;
+	}
+
+	/** Check if a note needs embedding and process it. */
+	private async processNote(
+		note: ParsedNote,
+		embeddedState: Map<string, string>,
+		stats: EmbedStats
+	): Promise<void> {
+		const existingModified = embeddedState.get(note.uuid);
+		if (existingModified === note.modified) {
+			stats.unchanged++;
+			return;
+		}
+
+		if (existingModified !== undefined) {
+			this.vectorStore.deleteByUuid(note.uuid);
+			stats.updated++;
+		} else {
+			stats.new++;
+		}
+
+		const storedChunks = await this.chunkAndEmbed(note);
+		if (storedChunks.length === 0) {
+			stats.skipped++;
+			return;
+		}
+
+		this.vectorStore.upsertChunks(storedChunks);
 	}
 
 	/** Chunk a note and generate embeddings for each chunk. */

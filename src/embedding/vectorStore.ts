@@ -11,7 +11,7 @@ function cosineSimilarity(a: number[], b: number[]): number {
 		normA += a[i] * a[i];
 		normB += b[i] * b[i];
 	}
-	const denom = Math.sqrt(normA) * Math.sqrt(normB);
+	const denom = Math.sqrt(normA * normB);
 	return denom === 0 ? 0 : dot / denom;
 }
 
@@ -221,6 +221,7 @@ export class VectorStore {
 	/**
 	 * Search for similar chunks by cosine similarity.
 	 * Returns top K results sorted by similarity descending.
+	 * Uses a min-heap approach to avoid sorting all results.
 	 */
 	search(
 		queryEmbedding: number[],
@@ -228,7 +229,7 @@ export class VectorStore {
 		excludeUuids?: Set<string>,
 		filterTags?: Set<string>
 	): Array<{ chunk: StoredChunk; similarity: number }> {
-		const results: Array<{ chunk: StoredChunk; similarity: number }> = [];
+		const heap: Array<{ chunk: StoredChunk; similarity: number }> = [];
 
 		for (const chunk of this.chunks.values()) {
 			if (excludeUuids && excludeUuids.has(chunk.metadata.uuid)) {
@@ -244,11 +245,19 @@ export class VectorStore {
 				}
 			}
 			const similarity = cosineSimilarity(queryEmbedding, chunk.embedding);
-			results.push({ chunk, similarity });
+
+			if (heap.length < topK) {
+				heap.push({ chunk, similarity });
+				if (heap.length === topK) {
+					heap.sort((a, b) => a.similarity - b.similarity);
+				}
+			} else if (similarity > heap[0].similarity) {
+				heap[0] = { chunk, similarity };
+				heap.sort((a, b) => a.similarity - b.similarity);
+			}
 		}
 
-		results.sort((a, b) => b.similarity - a.similarity);
-		return results.slice(0, topK);
+		return heap.sort((a, b) => b.similarity - a.similarity);
 	}
 
 	private getFilePath(plugin: Plugin): string {

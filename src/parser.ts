@@ -2,28 +2,14 @@ import { App, TFile } from "obsidian";
 import { ParsedNote } from "./types";
 import { PkmRagSettings, resolveParseSettings } from "./settings";
 import { extractSectionByHeading } from "./markdownParser";
-
-const PROPERTY_WIKILINK_PATTERN = /\([A-Za-z]+::\s*\[\[(?:[^\]|]*\|)?([^\]]+)\]\]\)/g;
-const WIKILINK_PATTERN = /\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/g;
-const DATAVIEW_FIELD_PATTERN = /^\s*\w+::\s*/gm;
+import { DEFAULTS } from "./constants";
 
 /** Extract target note titles from wikilinks (link target, not display text). */
 const WIKILINK_TARGET_PATTERN = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g;
 const PROPERTY_WIKILINK_TARGET_PATTERN = /\([A-Za-z]+::\s*\[\[([^\]|]+)(?:\|[^\]]*)?\]\]\)/g;
 
-/**
- * Extract content under a specific heading using AST-based parsing.
- * Captures from the heading until the next same-or-higher-level heading or end of file.
- * Headings inside code blocks are correctly ignored.
- */
-export function extractSection(text: string, headerName: string, headerLevel: number): string | null {
-	return extractSectionByHeading(text, headerName, headerLevel);
-}
-
-/**
- * Extract content after frontmatter (everything after the closing ---).
- */
-export function extractFullContent(text: string): string | null {
+/** Extract content after frontmatter (everything after the closing ---). */
+function extractFullContent(text: string): string | null {
 	let content = text;
 	if (text.startsWith("---")) {
 		const endIdx = text.indexOf("---", 3);
@@ -35,7 +21,7 @@ export function extractFullContent(text: string): string | null {
 }
 
 /** Extract wikilink targets (the note being linked to). */
-export function extractWikilinks(text: string): string[] {
+function extractWikilinks(text: string): string[] {
 	const links = new Set<string>();
 
 	// Property wikilinks: (Jump:: [[Target|display]]) -> Target
@@ -55,13 +41,13 @@ export function extractWikilinks(text: string): string[] {
 }
 
 /** Strip wikilink syntax and dataview fields to plain text. */
-export function cleanWikilinks(text: string): string {
+function cleanWikilinks(text: string): string {
 	// Property wikilinks: (Jump:: [[X|y]]) -> y
-	let cleaned = text.replace(PROPERTY_WIKILINK_PATTERN, "$1");
+	let cleaned = text.replace(DEFAULTS.PROPERTY_WIKILINK_PATTERN, "$1");
 	// Standard wikilinks: [[X|y]] -> y, [[X]] -> X
-	cleaned = cleaned.replace(WIKILINK_PATTERN, "$1");
+	cleaned = cleaned.replace(DEFAULTS.WIKILINK_PATTERN, "$1");
 	// Dataview inline fields at line start
-	cleaned = cleaned.replace(DATAVIEW_FIELD_PATTERN, "");
+	cleaned = cleaned.replace(DEFAULTS.DATAVIEW_FIELD_PATTERN, "");
 	return cleaned;
 }
 
@@ -98,7 +84,7 @@ export async function parseNote(
 	// Extract content based on content mode
 	let rawContent: string | null;
 	if (parse.contentMode === "section") {
-		rawContent = extractSection(text, parse.noteSectionHeaderName, parse.noteSectionHeaderLevel);
+		rawContent = extractSectionByHeading(text, parse.noteSectionHeaderName, parse.noteSectionHeaderLevel);
 	} else {
 		rawContent = extractFullContent(text);
 	}

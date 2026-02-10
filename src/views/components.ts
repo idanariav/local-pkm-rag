@@ -1,6 +1,8 @@
 import { MarkdownRenderer, App, Component } from "obsidian";
 import { SourceInfo } from "../types";
 
+const MAX_DROPDOWN_ITEMS = 20;
+
 /** Create a collapsible sources section. */
 export function createSourcesEl(
 	container: HTMLElement,
@@ -50,48 +52,46 @@ export async function renderMarkdown(
 	await MarkdownRenderer.render(app, content, container, "", component);
 }
 
-/** Create a multi-select tag filter with chips and dropdown. */
-export function createTagFilter(
+/**
+ * Shared chip-based multi-select dropdown with search filtering.
+ * Used by both createTagFilter and createNoteSelector (multi-select mode).
+ */
+function createChipSelector(
 	container: HTMLElement,
-	tags: string[],
+	items: string[],
+	placeholder: string,
 	onChange: (selected: string[]) => void
-): void {
-	const wrapper = container.createDiv({ cls: "pkm-rag-tag-filter" });
-	wrapper.createEl("small", {
-		text: "Filter by tags",
-		cls: "pkm-rag-tag-filter-label",
-	});
-
+): { getSelected: () => string[]; cleanup: () => void } {
 	const selected = new Set<string>();
 
-	const chipsContainer = wrapper.createDiv({
+	const chipsContainer = container.createDiv({
 		cls: "pkm-rag-chips-container",
 	});
 
-	const searchInput = wrapper.createEl("input", {
+	const searchInput = container.createEl("input", {
 		type: "text",
-		placeholder: "Search tags...",
+		placeholder,
 		cls: "pkm-rag-note-search",
 	});
 
-	const dropdown = wrapper.createDiv({
+	const dropdown = container.createDiv({
 		cls: "pkm-rag-note-dropdown",
 	});
 	dropdown.style.display = "none";
 
 	const renderChips = () => {
 		chipsContainer.empty();
-		for (const tag of selected) {
+		for (const item of selected) {
 			const chip = chipsContainer.createDiv({
 				cls: "pkm-rag-chip",
 			});
-			chip.createSpan({ text: tag });
+			chip.createSpan({ text: item });
 			const removeBtn = chip.createEl("button", {
 				text: "\u00d7",
 				cls: "pkm-rag-chip-remove",
 			});
 			removeBtn.addEventListener("click", () => {
-				selected.delete(tag);
+				selected.delete(item);
 				renderChips();
 				onChange(Array.from(selected));
 			});
@@ -100,7 +100,7 @@ export function createTagFilter(
 
 	const renderDropdown = (filter: string) => {
 		dropdown.empty();
-		const filtered = tags.filter(
+		const filtered = items.filter(
 			(t) =>
 				!selected.has(t) &&
 				t.toLowerCase().includes(filter.toLowerCase())
@@ -110,13 +110,13 @@ export function createTagFilter(
 			return;
 		}
 		dropdown.style.display = "block";
-		for (const tag of filtered.slice(0, 20)) {
-			const item = dropdown.createDiv({
-				text: tag,
+		for (const item of filtered.slice(0, MAX_DROPDOWN_ITEMS)) {
+			const el = dropdown.createDiv({
+				text: item,
 				cls: "pkm-rag-dropdown-item",
 			});
-			item.addEventListener("click", () => {
-				selected.add(tag);
+			el.addEventListener("click", () => {
+				selected.add(item);
 				searchInput.value = "";
 				dropdown.style.display = "none";
 				renderChips();
@@ -132,11 +132,33 @@ export function createTagFilter(
 		renderDropdown(searchInput.value);
 	});
 
-	document.addEventListener("click", (e) => {
-		if (!wrapper.contains(e.target as Node)) {
+	const onClickOutside = (e: MouseEvent) => {
+		if (!container.contains(e.target as Node)) {
 			dropdown.style.display = "none";
 		}
+	};
+	document.addEventListener("click", onClickOutside);
+
+	return {
+		getSelected: () => Array.from(selected),
+		cleanup: () => document.removeEventListener("click", onClickOutside),
+	};
+}
+
+/** Create a multi-select tag filter with chips and dropdown. */
+export function createTagFilter(
+	container: HTMLElement,
+	tags: string[],
+	onChange: (selected: string[]) => void
+): { cleanup: () => void } {
+	const wrapper = container.createDiv({ cls: "pkm-rag-tag-filter" });
+	wrapper.createEl("small", {
+		text: "Filter by tags",
+		cls: "pkm-rag-tag-filter-label",
 	});
+
+	const { cleanup } = createChipSelector(wrapper, tags, "Search tags...", onChange);
+	return { cleanup };
 }
 
 /** Create a searchable note selector dropdown. */
@@ -146,143 +168,68 @@ export function createNoteSelector(
 	placeholder: string,
 	multiple: boolean,
 	onChange: (selected: string[]) => void
-): { getSelected: () => string[] } {
+): { getSelected: () => string[]; cleanup: () => void } {
 	const wrapper = container.createDiv({ cls: "pkm-rag-note-selector" });
-	const selected: Set<string> = new Set();
 
 	if (multiple) {
-		// Multi-select with chips
-		const chipsContainer = wrapper.createDiv({
-			cls: "pkm-rag-chips-container",
-		});
-
-		const searchInput = wrapper.createEl("input", {
-			type: "text",
-			placeholder,
-			cls: "pkm-rag-note-search",
-		});
-
-		const dropdown = wrapper.createDiv({
-			cls: "pkm-rag-note-dropdown",
-		});
-		dropdown.style.display = "none";
-
-		const renderChips = () => {
-			chipsContainer.empty();
-			for (const title of selected) {
-				const chip = chipsContainer.createDiv({
-					cls: "pkm-rag-chip",
-				});
-				chip.createSpan({ text: title });
-				const removeBtn = chip.createEl("button", {
-					text: "\u00d7",
-					cls: "pkm-rag-chip-remove",
-				});
-				removeBtn.addEventListener("click", () => {
-					selected.delete(title);
-					renderChips();
-					onChange(Array.from(selected));
-				});
-			}
-		};
-
-		const renderDropdown = (filter: string) => {
-			dropdown.empty();
-			const filtered = titles.filter(
-				(t) =>
-					!selected.has(t) &&
-					t.toLowerCase().includes(filter.toLowerCase())
-			);
-			if (filtered.length === 0) {
-				dropdown.style.display = "none";
-				return;
-			}
-			dropdown.style.display = "block";
-			for (const title of filtered.slice(0, 20)) {
-				const item = dropdown.createDiv({
-					text: title,
-					cls: "pkm-rag-dropdown-item",
-				});
-				item.addEventListener("click", () => {
-					selected.add(title);
-					searchInput.value = "";
-					dropdown.style.display = "none";
-					renderChips();
-					onChange(Array.from(selected));
-				});
-			}
-		};
-
-		searchInput.addEventListener("input", () => {
-			renderDropdown(searchInput.value);
-		});
-		searchInput.addEventListener("focus", () => {
-			renderDropdown(searchInput.value);
-		});
-
-		// Close dropdown when clicking outside
-		document.addEventListener("click", (e) => {
-			if (!wrapper.contains(e.target as Node)) {
-				dropdown.style.display = "none";
-			}
-		});
-
-		return {
-			getSelected: () => Array.from(selected),
-		};
-	} else {
-		// Single-select dropdown
-		const searchInput = wrapper.createEl("input", {
-			type: "text",
-			placeholder,
-			cls: "pkm-rag-note-search",
-		});
-
-		const dropdown = wrapper.createDiv({
-			cls: "pkm-rag-note-dropdown",
-		});
-		dropdown.style.display = "none";
-
-		const renderDropdown = (filter: string) => {
-			dropdown.empty();
-			const filtered = titles.filter((t) =>
-				t.toLowerCase().includes(filter.toLowerCase())
-			);
-			if (filtered.length === 0) {
-				dropdown.style.display = "none";
-				return;
-			}
-			dropdown.style.display = "block";
-			for (const title of filtered.slice(0, 20)) {
-				const item = dropdown.createDiv({
-					text: title,
-					cls: "pkm-rag-dropdown-item",
-				});
-				item.addEventListener("click", () => {
-					selected.clear();
-					selected.add(title);
-					searchInput.value = title;
-					dropdown.style.display = "none";
-					onChange([title]);
-				});
-			}
-		};
-
-		searchInput.addEventListener("input", () => {
-			renderDropdown(searchInput.value);
-		});
-		searchInput.addEventListener("focus", () => {
-			renderDropdown(searchInput.value);
-		});
-
-		document.addEventListener("click", (e) => {
-			if (!wrapper.contains(e.target as Node)) {
-				dropdown.style.display = "none";
-			}
-		});
-
-		return {
-			getSelected: () => Array.from(selected),
-		};
+		return createChipSelector(wrapper, titles, placeholder, onChange);
 	}
+
+	// Single-select dropdown
+	const selected: Set<string> = new Set();
+
+	const searchInput = wrapper.createEl("input", {
+		type: "text",
+		placeholder,
+		cls: "pkm-rag-note-search",
+	});
+
+	const dropdown = wrapper.createDiv({
+		cls: "pkm-rag-note-dropdown",
+	});
+	dropdown.style.display = "none";
+
+	const renderDropdown = (filter: string) => {
+		dropdown.empty();
+		const filtered = titles.filter((t) =>
+			t.toLowerCase().includes(filter.toLowerCase())
+		);
+		if (filtered.length === 0) {
+			dropdown.style.display = "none";
+			return;
+		}
+		dropdown.style.display = "block";
+		for (const title of filtered.slice(0, MAX_DROPDOWN_ITEMS)) {
+			const item = dropdown.createDiv({
+				text: title,
+				cls: "pkm-rag-dropdown-item",
+			});
+			item.addEventListener("click", () => {
+				selected.clear();
+				selected.add(title);
+				searchInput.value = title;
+				dropdown.style.display = "none";
+				onChange([title]);
+			});
+		}
+	};
+
+	searchInput.addEventListener("input", () => {
+		renderDropdown(searchInput.value);
+	});
+	searchInput.addEventListener("focus", () => {
+		renderDropdown(searchInput.value);
+	});
+
+	const onClickOutside = (e: MouseEvent) => {
+		if (!wrapper.contains(e.target as Node)) {
+			dropdown.style.display = "none";
+		}
+	};
+	document.addEventListener("click", onClickOutside);
+
+	return {
+		getSelected: () => Array.from(selected),
+		cleanup: () => document.removeEventListener("click", onClickOutside),
+	};
 }
