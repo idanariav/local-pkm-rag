@@ -3,7 +3,7 @@ import type PkmRagPlugin from "../main";
 import { ChatMessage, ChatMode, SourceInfo } from "../types";
 import { createSourcesEl, renderMarkdown, createNoteSelector, createTagFilter } from "./components";
 import {
-	runAskMode,
+	runExploreMode,
 	runConnectMode,
 	runGapMode,
 	runDevilsAdvocateMode,
@@ -14,7 +14,7 @@ export const CHAT_VIEW_TYPE = "pkm-rag-chat";
 
 export class ChatView extends ItemView {
 	private plugin: PkmRagPlugin;
-	private currentMode: ChatMode = "ask";
+	private currentMode: ChatMode = "explore";
 	private messages: ChatMessage[] = [];
 	private isProcessing = false;
 
@@ -61,7 +61,7 @@ export class ChatView extends ItemView {
 			cls: "pkm-rag-mode-select",
 		});
 		const modes: { value: ChatMode; label: string }[] = [
-			{ value: "ask", label: "Ask" },
+			{ value: "explore", label: "Explore" },
 			{ value: "connect", label: "Connect" },
 			{ value: "gap", label: "Gap Analysis" },
 			{ value: "devils_advocate", label: "Devil's Advocate" },
@@ -144,7 +144,7 @@ export class ChatView extends ItemView {
 		const titles = this.plugin.vectorStore.getAllTitles();
 
 		switch (this.currentMode) {
-			case "ask": {
+			case "explore": {
 				const tip = this.modeConfigEl.createDiv({
 					cls: "pkm-rag-mode-tip",
 				});
@@ -261,7 +261,7 @@ export class ChatView extends ItemView {
 		this.inputArea.empty();
 
 		const showTextInput =
-			this.currentMode === "ask" ||
+			this.currentMode === "explore" ||
 			this.currentMode === "gap" ||
 			(this.currentMode === "redundancy" && this.redundancyInputType === "idea");
 
@@ -288,8 +288,8 @@ export class ChatView extends ItemView {
 
 	private getInputPlaceholder(): string {
 		switch (this.currentMode) {
-			case "ask":
-				return "Ask about your notes...";
+			case "explore":
+				return "Explore your notes...";
 			case "gap":
 				return "Enter a topic...";
 			case "redundancy":
@@ -301,8 +301,8 @@ export class ChatView extends ItemView {
 
 	private getSendButtonText(): string {
 		switch (this.currentMode) {
-			case "ask":
-				return "Send";
+			case "explore":
+				return "Explore";
 			case "connect":
 				return "Explore";
 			case "gap":
@@ -320,7 +320,7 @@ export class ChatView extends ItemView {
 		let userContent = "";
 
 		switch (this.currentMode) {
-			case "ask":
+			case "explore":
 			case "gap": {
 				const text = this.textInput?.value?.trim();
 				if (!text) return;
@@ -402,8 +402,8 @@ export class ChatView extends ItemView {
 			const tags = this.selectedTags.length > 0 ? this.selectedTags : undefined;
 
 			switch (this.currentMode) {
-				case "ask":
-					result = await runAskMode(
+				case "explore":
+					result = await runExploreMode(
 						userContent,
 						this.plugin.vectorStore,
 						this.plugin.ollamaClient,

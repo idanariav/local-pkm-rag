@@ -8286,49 +8286,50 @@ var RelatedNotesView = class extends import_obsidian4.ItemView {
 var import_obsidian5 = require("obsidian");
 
 // src/rag/prompts.ts
-var SYSTEM_PROMPT = `You are a knowledge assistant that answers questions using ONLY the provided context from personal notes.
+var EXPLORE_SYSTEM_PROMPT = `You are a knowledge assistant that answers questions using ONLY the provided context from personal notes.
 
 RULES:
 - Answer ONLY from the provided context. If the context does not contain the answer, say "I don't have information about that in my notes."
-- Be concise and direct.
+- Lead with the key point, then provide supporting details.
 - When referencing information, cite the source note title in brackets like [Note Title].
 - Do not fabricate information or use external knowledge.
-- If multiple notes discuss the topic, synthesize them and cite each.`;
-var EXPLORE_SYSTEM_PROMPT = `You are a knowledge assistant that finds connections between concepts using ONLY the provided context from personal notes.
+- If multiple notes discuss the topic, synthesize them and cite each.
+- If notes contradict each other, present both perspectives and note the disagreement.`;
+var CONNECT_SYSTEM_PROMPT = `You are a knowledge assistant that finds connections between concepts using ONLY the provided context from personal notes.
 
 RULES:
 - Use ONLY the provided context. Do not use external knowledge.
-- Identify shared themes, tensions, complementary ideas, or causal links.
+- Organize findings by connection type: shared themes, tensions, complementary ideas, or causal links.
 - Cite source notes in [brackets].
-- If the context shows no meaningful connection, say so honestly.`;
+- If the context shows no meaningful connection, say so honestly.
+- Suggest which notes could be linked or merged based on your analysis.`;
 var GAP_SYSTEM_PROMPT = `You are a knowledge analyst reviewing personal notes on a topic.
 
 RULES:
-- Analyze ONLY the provided context.
-- Identify what sub-topics, perspectives, or counterarguments seem absent or underrepresented.
+- Use the provided context to understand what IS covered. Use your general knowledge to identify what SHOULD be covered but is missing or underrepresented.
 - Distinguish between 'not covered' and 'briefly mentioned'.
 - Cite existing notes in [brackets] when referencing what IS covered.
-- Be specific about what's missing \u2014 don't just say 'more depth needed'.`;
-var STRESS_TEST_SYSTEM_PROMPT = `You are a critical thinking partner analyzing personal notes.
+- Be specific about what's missing \u2014 don't just say 'more depth needed'.
+- Clearly label which observations come from the notes versus your own assessment.`;
+var DEVILS_ADVOCATE_SYSTEM_PROMPT = `You are a critical thinking partner analyzing personal notes.
 
 RULES:
-- Use ONLY the provided context from notes.
+- Ground your analysis in the provided notes. You may use general reasoning to construct counterarguments, but clearly distinguish between what the notes say and your own critical analysis.
+- Briefly acknowledge the strongest aspects of the argument before critiquing.
 - Identify logical weaknesses, unstated assumptions, or tensions within and between the notes.
 - Steelman the opposing viewpoint using evidence from other notes when available.
 - Be constructive \u2014 the goal is to strengthen understanding, not dismiss.
 - Cite source notes in [brackets].`;
-var QUERY_REWRITE_PROMPT = `Rewrite the following question to improve semantic search retrieval over a personal knowledge base. Add related terms, synonyms, and rephrasings that would help find relevant notes. Return ONLY the rewritten query, nothing else.
+var QUERY_REWRITE_PROMPT = `Rewrite the following question to improve semantic search retrieval over a personal knowledge base. Add related terms, synonyms, and rephrasings that would help find relevant notes. Keep the rewritten query concise (under 50 words). Return ONLY the rewritten query, nothing else.
 
 Original question: {question}`;
-function formatRagPrompt(context, question) {
+function formatExplorePrompt(context, question) {
   return `CONTEXT FROM NOTES:
 ${context}
 
-QUESTION: ${question}
-
-Answer based ONLY on the context above. Cite source notes in [brackets].`;
+QUESTION: ${question}`;
 }
-function formatExplorePrompt(conceptContexts) {
+function formatConnectPrompt(conceptContexts) {
   const parts = [];
   for (const [concept, context] of conceptContexts) {
     parts.push(`=== ${concept.toUpperCase()} ===
@@ -8341,7 +8342,7 @@ ${allContext}
 
 Analyze how these concepts relate to each other: ${conceptsList}
 
-Identify connections, tensions, and complementary ideas. Cite source notes in [brackets].`;
+Identify connections, tensions, and complementary ideas. Suggest any notes that should be linked based on these connections.`;
 }
 function formatGapPrompt(context, topic) {
   return `CONTEXT FROM NOTES ON "${topic.toUpperCase()}":
@@ -8350,9 +8351,9 @@ ${context}
 Analyze the coverage of "${topic}" in these notes.
 1. Summarize what IS well covered.
 2. Identify specific sub-topics, perspectives, or counterarguments that are missing or underrepresented.
-Cite source notes in [brackets].`;
+3. Suggest specific questions to research or sub-topics to write about next.`;
 }
-function formatStressTestPrompt(title, noteContext, relatedContext) {
+function formatDevilsAdvocatePrompt(title, noteContext, relatedContext) {
   let prompt = `TARGET NOTE: "${title}"
 ${noteContext}
 
@@ -8364,10 +8365,10 @@ ${relatedContext}
 `;
   }
   prompt += `Critically analyze the ideas in "${title}":
-1. What assumptions does it make?
-2. What are the logical weaknesses or gaps?
-3. What would the strongest counterargument look like? Use evidence from related notes if available.
-Cite source notes in [brackets].`;
+1. What are the strongest aspects of this note's argument?
+2. What assumptions does it make?
+3. What are the logical weaknesses or gaps?
+4. What would the strongest counterargument look like? Use evidence from related notes if available.`;
   return prompt;
 }
 var REDUNDANCY_SYSTEM_PROMPT = `You are a knowledge management assistant analyzing note redundancy.
@@ -8377,8 +8378,8 @@ RULES:
 - Determine if the target content is redundant with existing notes.
 - Distinguish between:
   * REDUNDANT: Highly overlapping content, merging recommended
-  * PARTIAL: Some overlap but distinct perspectives, consider consolidation
-  * COMPLEMENTARY: Related but different focus, keep separate
+  * PARTIAL OVERLAP: Some overlap but distinct perspectives, consider consolidation
+  * UNIQUE: Related but different focus, keep separate
 - For each similar note, explain WHAT overlaps and WHAT is unique.
 - Consider similarity scores as confidence indicators (0.7-0.8 = moderate, 0.8+ = high).
 - Provide a clear verdict and actionable recommendation.
@@ -8422,7 +8423,7 @@ async function rewriteQuery(question, ollamaClient) {
     return question;
   }
 }
-async function runAskMode(question, vectorStore, ollamaClient, settings, onToken, filterTags) {
+async function runExploreMode(question, vectorStore, ollamaClient, settings, onToken, filterTags) {
   let searchQuery = question;
   if (settings.enableQueryRewrite) {
     searchQuery = await rewriteQuery(question, ollamaClient);
@@ -8441,9 +8442,9 @@ async function runAskMode(question, vectorStore, ollamaClient, settings, onToken
       sources: []
     };
   }
-  const prompt = formatRagPrompt(formattedContext, question);
+  const prompt = formatExplorePrompt(formattedContext, question);
   const messages = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: EXPLORE_SYSTEM_PROMPT },
     { role: "user", content: prompt }
   ];
   const answer = await chatWithOptionalStreaming(
@@ -8472,9 +8473,9 @@ async function runConnectMode(selectedNotes, vectorStore, ollamaClient, settings
     );
     allSources.push(...sources);
   }
-  const prompt = formatExplorePrompt(conceptContexts);
+  const prompt = formatConnectPrompt(conceptContexts);
   const messages = [
-    { role: "system", content: EXPLORE_SYSTEM_PROMPT },
+    { role: "system", content: CONNECT_SYSTEM_PROMPT },
     { role: "user", content: prompt }
   ];
   const answer = await chatWithOptionalStreaming(
@@ -8557,9 +8558,9 @@ ${chunk.text}`);
     }
   }
   const relatedContext = relatedParts.join("\n\n---\n\n");
-  const prompt = formatStressTestPrompt(title, noteContext, relatedContext);
+  const prompt = formatDevilsAdvocatePrompt(title, noteContext, relatedContext);
   const messages = [
-    { role: "system", content: STRESS_TEST_SYSTEM_PROMPT },
+    { role: "system", content: DEVILS_ADVOCATE_SYSTEM_PROMPT },
     { role: "user", content: prompt }
   ];
   const answer = await chatWithOptionalStreaming(
@@ -8653,7 +8654,7 @@ var CHAT_VIEW_TYPE = "pkm-rag-chat";
 var ChatView = class extends import_obsidian5.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
-    this.currentMode = "ask";
+    this.currentMode = "explore";
     this.messages = [];
     this.isProcessing = false;
     // DOM references
@@ -8688,7 +8689,7 @@ var ChatView = class extends import_obsidian5.ItemView {
       cls: "pkm-rag-mode-select"
     });
     const modes = [
-      { value: "ask", label: "Ask" },
+      { value: "explore", label: "Explore" },
       { value: "connect", label: "Connect" },
       { value: "gap", label: "Gap Analysis" },
       { value: "devils_advocate", label: "Devil's Advocate" },
@@ -8760,7 +8761,7 @@ var ChatView = class extends import_obsidian5.ItemView {
     this.modeConfigEl.empty();
     const titles = this.plugin.vectorStore.getAllTitles();
     switch (this.currentMode) {
-      case "ask": {
+      case "explore": {
         const tip = this.modeConfigEl.createDiv({
           cls: "pkm-rag-mode-tip"
         });
@@ -8867,7 +8868,7 @@ var ChatView = class extends import_obsidian5.ItemView {
     if (!this.inputArea)
       return;
     this.inputArea.empty();
-    const showTextInput = this.currentMode === "ask" || this.currentMode === "gap" || this.currentMode === "redundancy" && this.redundancyInputType === "idea";
+    const showTextInput = this.currentMode === "explore" || this.currentMode === "gap" || this.currentMode === "redundancy" && this.redundancyInputType === "idea";
     if (showTextInput) {
       this.textInput = this.inputArea.createEl("textarea", {
         placeholder: this.getInputPlaceholder(),
@@ -8889,8 +8890,8 @@ var ChatView = class extends import_obsidian5.ItemView {
   }
   getInputPlaceholder() {
     switch (this.currentMode) {
-      case "ask":
-        return "Ask about your notes...";
+      case "explore":
+        return "Explore your notes...";
       case "gap":
         return "Enter a topic...";
       case "redundancy":
@@ -8901,8 +8902,8 @@ var ChatView = class extends import_obsidian5.ItemView {
   }
   getSendButtonText() {
     switch (this.currentMode) {
-      case "ask":
-        return "Send";
+      case "explore":
+        return "Explore";
       case "connect":
         return "Explore";
       case "gap":
@@ -8919,7 +8920,7 @@ var ChatView = class extends import_obsidian5.ItemView {
       return;
     let userContent = "";
     switch (this.currentMode) {
-      case "ask":
+      case "explore":
       case "gap": {
         const text3 = (_b = (_a = this.textInput) == null ? void 0 : _a.value) == null ? void 0 : _b.trim();
         if (!text3)
@@ -8992,8 +8993,8 @@ var ChatView = class extends import_obsidian5.ItemView {
       let result;
       const tags = this.selectedTags.length > 0 ? this.selectedTags : void 0;
       switch (this.currentMode) {
-        case "ask":
-          result = await runAskMode(
+        case "explore":
+          result = await runExploreMode(
             userContent,
             this.plugin.vectorStore,
             this.plugin.ollamaClient,

@@ -72,4 +72,4 @@ export interface EmbedStats {
 	errors: number;
 }
 
-export type ChatMode = "ask" | "connect" | "gap" | "devils_advocate" | "redundancy";
+export type ChatMode = "explore" | "connect" | "gap" | "devils_advocate" | "redundancy";

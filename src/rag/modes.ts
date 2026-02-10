@@ -5,16 +5,16 @@ import { SourceInfo } from "../types";
 import { DEFAULTS } from "../constants";
 import { retrieveContext } from "./retrieval";
 import {
-	SYSTEM_PROMPT,
 	EXPLORE_SYSTEM_PROMPT,
+	CONNECT_SYSTEM_PROMPT,
 	GAP_SYSTEM_PROMPT,
-	STRESS_TEST_SYSTEM_PROMPT,
+	DEVILS_ADVOCATE_SYSTEM_PROMPT,
 	REDUNDANCY_SYSTEM_PROMPT,
 	QUERY_REWRITE_PROMPT,
-	formatRagPrompt,
 	formatExplorePrompt,
+	formatConnectPrompt,
 	formatGapPrompt,
-	formatStressTestPrompt,
+	formatDevilsAdvocatePrompt,
 	formatRedundancyPrompt,
 } from "./prompts";
 import {
@@ -48,7 +48,7 @@ async function rewriteQuery(
 }
 
 /** Ask mode: RAG Q&A with optional query rewriting. */
-export async function runAskMode(
+export async function runExploreMode(
 	question: string,
 	vectorStore: VectorStore,
 	ollamaClient: OllamaClient,
@@ -79,9 +79,9 @@ export async function runAskMode(
 	}
 
 	// Use original question in the RAG prompt (not the rewritten one)
-	const prompt = formatRagPrompt(formattedContext, question);
+	const prompt = formatExplorePrompt(formattedContext, question);
 	const messages = [
-		{ role: "system", content: SYSTEM_PROMPT },
+		{ role: "system", content: EXPLORE_SYSTEM_PROMPT },
 		{ role: "user", content: prompt },
 	];
 
@@ -120,9 +120,9 @@ export async function runConnectMode(
 		allSources.push(...sources);
 	}
 
-	const prompt = formatExplorePrompt(conceptContexts);
+	const prompt = formatConnectPrompt(conceptContexts);
 	const messages = [
-		{ role: "system", content: EXPLORE_SYSTEM_PROMPT },
+		{ role: "system", content: CONNECT_SYSTEM_PROMPT },
 		{ role: "user", content: prompt },
 	];
 
@@ -231,9 +231,9 @@ export async function runDevilsAdvocateMode(
 	}
 
 	const relatedContext = relatedParts.join("\n\n---\n\n");
-	const prompt = formatStressTestPrompt(title, noteContext, relatedContext);
+	const prompt = formatDevilsAdvocatePrompt(title, noteContext, relatedContext);
 	const messages = [
-		{ role: "system", content: STRESS_TEST_SYSTEM_PROMPT },
+		{ role: "system", content: DEVILS_ADVOCATE_SYSTEM_PROMPT },
 		{ role: "user", content: prompt },
 	];
 
