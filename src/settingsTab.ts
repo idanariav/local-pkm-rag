@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting, Notice } from "obsidian";
 import type PkmRagPlugin from "./main";
-import { OllamaClient } from "./embedding/ollamaClient";
+import { OllamaChatClient } from "./ollama/chatClient";
 
 export class PkmRagSettingTab extends PluginSettingTab {
 	plugin: PkmRagPlugin;
@@ -37,18 +37,40 @@ export class PkmRagSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
+		// --- QMD ---
+		containerEl.createEl("h3", { text: "QMD" });
+
+		this.addTextSetting(containerEl, "QMD path", "Path to the qmd binary",
+			"qmd",
+			() => this.plugin.settings.qmdPath,
+			(v) => { this.plugin.settings.qmdPath = v; });
+
+		this.addTextSetting(containerEl, "Default collection", "QMD collection to search by default (leave empty for all)",
+			"",
+			() => this.plugin.settings.defaultCollection,
+			(v) => { this.plugin.settings.defaultCollection = v; });
+
+		new Setting(containerEl)
+			.setName("Test QMD connection")
+			.setDesc("Check if QMD is reachable")
+			.addButton((btn) =>
+				btn.setButtonText("Test").onClick(async () => {
+					const ok = await this.plugin.qmdClient.isAvailable();
+					new Notice(
+						ok
+							? "QMD is connected and available."
+							: "Cannot reach QMD. Is it installed?"
+					);
+				})
+			);
+
 		// --- Ollama Connection ---
-		containerEl.createEl("h3", { text: "Ollama Connection" });
+		containerEl.createEl("h3", { text: "Ollama (Chat)" });
 
 		this.addTextSetting(containerEl, "Ollama URL", "Base URL for the local Ollama instance",
 			"http://localhost:11434",
 			() => this.plugin.settings.ollamaUrl,
 			(v) => { this.plugin.settings.ollamaUrl = v; });
-
-		this.addTextSetting(containerEl, "Embedding model", "Ollama model for generating embeddings",
-			"nomic-embed-text",
-			() => this.plugin.settings.embedModel,
-			(v) => { this.plugin.settings.embedModel = v; });
 
 		this.addTextSetting(containerEl, "Chat model", "Ollama model for chat/generation",
 			"llama3.1:8b",
@@ -56,29 +78,12 @@ export class PkmRagSettingTab extends PluginSettingTab {
 			(v) => { this.plugin.settings.chatModel = v; });
 
 		new Setting(containerEl)
-			.setName("Embedding dimensions")
-			.setDesc("Vector dimensions for the embedding model")
-			.addText((text) =>
-				text
-					.setPlaceholder("768")
-					.setValue(String(this.plugin.settings.embedDimensions))
-					.onChange(async (value) => {
-						const n = parseInt(value);
-						if (!isNaN(n) && n > 0) {
-							this.plugin.settings.embedDimensions = n;
-							await this.plugin.saveSettings();
-						}
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Test connection")
+			.setName("Test Ollama connection")
 			.setDesc("Check if Ollama is reachable")
 			.addButton((btn) =>
 				btn.setButtonText("Test").onClick(async () => {
-					const client = new OllamaClient(
+					const client = new OllamaChatClient(
 						this.plugin.settings.ollamaUrl,
-						this.plugin.settings.embedModel,
 						this.plugin.settings.chatModel
 					);
 					const ok = await client.isAvailable();
@@ -90,57 +95,18 @@ export class PkmRagSettingTab extends PluginSettingTab {
 				})
 			);
 
-		// --- Vault Folders ---
-		containerEl.createEl("h3", { text: "Vault Folders" });
+		// --- Parsing (for section extraction) ---
+		containerEl.createEl("h3", { text: "Section Extraction" });
 
 		containerEl.createEl("p", {
-			text: "Configure which folders to embed. Leave empty to embed the entire vault. Per-folder overrides inherit from the global parsing defaults below.",
-			cls: "setting-item-description",
-		});
-
-		const folderListEl = containerEl.createDiv("pkm-folder-list");
-		this.renderFolderList(folderListEl);
-
-		new Setting(containerEl)
-			.addButton((btn) =>
-				btn.setButtonText("+ Add folder").onClick(async () => {
-					this.plugin.settings.folderConfigs.push({ folder: "" });
-					await this.plugin.saveSettings();
-					folderListEl.empty();
-					this.renderFolderList(folderListEl);
-				})
-			);
-
-		this.addTextSetting(containerEl, "Excluded folders", "Comma-separated folder paths to exclude",
-			".obsidian, .trash",
-			() => this.plugin.settings.excludedFolders,
-			(v) => { this.plugin.settings.excludedFolders = v; });
-
-		new Setting(containerEl)
-			.setName("Embeddings folder path")
-			.setDesc("Folder to store the embeddings database (relative to vault root)")
-			.addText((text) =>
-				text
-					.setPlaceholder(".pkm-embeddings")
-					.setValue(this.plugin.settings.embeddingsFolderPath)
-					.onChange(async (value) => {
-						this.plugin.settings.embeddingsFolderPath = value || ".pkm-embeddings";
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// --- Parsing (Global Defaults) ---
-		containerEl.createEl("h3", { text: "Parsing (Global Defaults)" });
-
-		containerEl.createEl("p", {
-			text: "These settings are used for all files unless overridden by a per-folder configuration above.",
+			text: "Controls which part of notes is used as context for the LLM. QMD finds relevant documents; these settings control what content is extracted from each result.",
 			cls: "setting-item-description",
 		});
 
 		new Setting(containerEl)
 			.setName("Content mode")
 			.setDesc(
-				"'Section' extracts only the configured header section. 'Full' embeds entire note content."
+				"'Section' extracts only the configured header section. 'Full' uses entire note content."
 			)
 			.addDropdown((dd) =>
 				dd
@@ -181,75 +147,39 @@ export class PkmRagSettingTab extends PluginSettingTab {
 					})
 			);
 
-		this.addTextSetting(containerEl, "Required frontmatter key",
-			"Notes without this frontmatter key are skipped",
-			"UUID",
-			() => this.plugin.settings.requiredFrontmatterKey,
-			(v) => { this.plugin.settings.requiredFrontmatterKey = v; });
-
-		this.addTextSetting(containerEl, "Modified field key",
-			"Frontmatter key used for change detection",
-			"Modified",
-			() => this.plugin.settings.modifiedFrontmatterKey,
-			(v) => { this.plugin.settings.modifiedFrontmatterKey = v; });
-
 		this.addTextSetting(containerEl, "Description field key",
-			"Frontmatter key for the note description (prepended to chunks)",
+			"Frontmatter key for the note description",
 			"Description",
 			() => this.plugin.settings.descriptionFrontmatterKey,
 			(v) => { this.plugin.settings.descriptionFrontmatterKey = v; });
 
-		// --- Chunking ---
-		containerEl.createEl("h3", { text: "Chunking" });
+		// Per-folder overrides
+		containerEl.createEl("h3", { text: "Per-Folder Overrides" });
+
+		containerEl.createEl("p", {
+			text: "Override section extraction settings for specific folders.",
+			cls: "setting-item-description",
+		});
+
+		const folderListEl = containerEl.createDiv("pkm-folder-list");
+		this.renderFolderList(folderListEl);
 
 		new Setting(containerEl)
-			.setName("Chunk size")
-			.setDesc("Maximum characters per chunk (200-2000)")
-			.addSlider((slider) =>
-				slider
-					.setLimits(200, 2000, 100)
-					.setValue(this.plugin.settings.chunkSize)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.chunkSize = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Chunk overlap")
-			.setDesc("Character overlap between chunks (0-500)")
-			.addSlider((slider) =>
-				slider
-					.setLimits(0, 500, 50)
-					.setValue(this.plugin.settings.chunkOverlap)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.chunkOverlap = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Minimum chunk length")
-			.setDesc("Chunks shorter than this are discarded (10-200)")
-			.addSlider((slider) =>
-				slider
-					.setLimits(10, 200, 10)
-					.setValue(this.plugin.settings.minChunkLength)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.minChunkLength = value;
-						await this.plugin.saveSettings();
-					})
+			.addButton((btn) =>
+				btn.setButtonText("+ Add folder").onClick(async () => {
+					this.plugin.settings.folderConfigs.push({ folder: "" });
+					await this.plugin.saveSettings();
+					folderListEl.empty();
+					this.renderFolderList(folderListEl);
+				})
 			);
 
 		// --- Retrieval ---
 		containerEl.createEl("h3", { text: "Retrieval" });
 
 		new Setting(containerEl)
-			.setName("Top K (Ask mode)")
-			.setDesc("Number of chunks retrieved for Q&A (1-20)")
+			.setName("Top K (Explore mode)")
+			.setDesc("Number of results retrieved for Q&A (1-20)")
 			.addSlider((slider) =>
 				slider
 					.setLimits(1, 20, 1)
@@ -277,7 +207,7 @@ export class PkmRagSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Top K (Gap analysis)")
-			.setDesc("Number of chunks for gap analysis (1-30)")
+			.setDesc("Number of results for gap analysis (1-30)")
 			.addSlider((slider) =>
 				slider
 					.setLimits(1, 30, 1)
@@ -292,7 +222,7 @@ export class PkmRagSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Similarity threshold")
 			.setDesc(
-				"Minimum similarity score to include results (0.0-1.0)"
+				"Minimum score to include results (0.0-1.0)"
 			)
 			.addSlider((slider) =>
 				slider
@@ -305,51 +235,6 @@ export class PkmRagSettingTab extends PluginSettingTab {
 					.setDynamicTooltip()
 					.onChange(async (value) => {
 						this.plugin.settings.similarityThreshold = value / 100;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Enable query rewrite")
-			.setDesc(
-				"Expand queries with related terms for broader retrieval (may reduce precision)"
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.enableQueryRewrite)
-					.onChange(async (value) => {
-						this.plugin.settings.enableQueryRewrite = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// --- Auto-embedding ---
-		containerEl.createEl("h3", { text: "Auto-embedding" });
-
-		new Setting(containerEl)
-			.setName("Enable auto-embedding")
-			.setDesc("Automatically embed notes when they are modified")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.enableAutoEmbed)
-					.onChange(async (value) => {
-						this.plugin.settings.enableAutoEmbed = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Auto-embed debounce time")
-			.setDesc(
-				"Seconds to wait after a note is modified before embedding (1-60 seconds)"
-			)
-			.addSlider((slider) =>
-				slider
-					.setLimits(1, 60, 1)
-					.setValue(this.plugin.settings.autoEmbedDebounceSeconds)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.autoEmbedDebounceSeconds = value;
 						await this.plugin.saveSettings();
 					})
 			);
@@ -382,44 +267,6 @@ export class PkmRagSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
-
-		// --- Actions ---
-		containerEl.createEl("h3", { text: "Actions" });
-
-		new Setting(containerEl)
-			.setName("Embed vault")
-			.setDesc("Run incremental embedding of all configured folders")
-			.addButton((btn) =>
-				btn
-					.setButtonText("Embed Vault")
-					.setCta()
-					.onClick(async () => {
-						await this.plugin.embedVault(false);
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Force re-embed")
-			.setDesc(
-				"Clear all embeddings and re-embed from scratch. Use after changing model or chunk settings."
-			)
-			.addButton((btn) =>
-				btn
-					.setButtonText("Force Re-embed")
-					.setWarning()
-					.onClick(async () => {
-						await this.plugin.embedVault(true);
-					})
-			);
-
-		// Stats display
-		const statsEl = containerEl.createDiv("pkm-rag-stats");
-		const totalChunks = this.plugin.vectorStore?.totalChunks ?? 0;
-		const totalNotes = this.plugin.vectorStore?.totalNotes ?? 0;
-		statsEl.createEl("p", {
-			text: `Embedded: ${totalNotes} notes, ${totalChunks} chunks`,
-			cls: "setting-item-description",
-		});
 	}
 
 	private renderFolderList(containerEl: HTMLElement): void {
@@ -427,7 +274,7 @@ export class PkmRagSettingTab extends PluginSettingTab {
 
 		if (configs.length === 0) {
 			containerEl.createEl("p", {
-				text: "No folders configured. Entire vault will be embedded.",
+				text: "No per-folder overrides configured.",
 				cls: "setting-item-description",
 			});
 			return;

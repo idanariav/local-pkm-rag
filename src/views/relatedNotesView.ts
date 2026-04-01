@@ -1,14 +1,14 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
 import type PkmRagPlugin from "../main";
 import { findSimilarNotes } from "../rag/retrieval";
-import { createTagFilter } from "./components";
+import { createCollectionFilter } from "./components";
 
 export const RELATED_NOTES_VIEW_TYPE = "pkm-rag-related-notes";
 
 export class RelatedNotesView extends ItemView {
 	private plugin: PkmRagPlugin;
 	private filterLinked: boolean;
-	private selectedTags: string[] = [];
+	private selectedCollection = "";
 	private resultsContainer: HTMLElement | null = null;
 	private cleanupFns: (() => void)[] = [];
 
@@ -16,6 +16,7 @@ export class RelatedNotesView extends ItemView {
 		super(leaf);
 		this.plugin = plugin;
 		this.filterLinked = plugin.settings.filterLinkedByDefault;
+		this.selectedCollection = plugin.settings.defaultCollection;
 	}
 
 	getViewType(): string {
@@ -55,16 +56,21 @@ export class RelatedNotesView extends ItemView {
 			this.refresh();
 		});
 
-		// Tag filter
-		const allTags = this.plugin.vectorStore.getAllTags();
-		if (allTags.length > 0) {
-			const tagFilterEl = container.createDiv({
-				cls: "pkm-rag-related-tag-filter",
+		// Collection filter
+		const collections = await this.plugin.qmdClient.getCollections();
+		if (collections.length > 0) {
+			const collectionFilterEl = container.createDiv({
+				cls: "pkm-rag-related-collection-filter",
 			});
-			const { cleanup } = createTagFilter(tagFilterEl, allTags, (tags) => {
-				this.selectedTags = tags;
-				this.refresh();
-			});
+			const { cleanup } = createCollectionFilter(
+				collectionFilterEl,
+				collections,
+				this.selectedCollection,
+				(collection) => {
+					this.selectedCollection = collection;
+					this.refresh();
+				}
+			);
 			this.cleanupFns.push(cleanup);
 		}
 
@@ -97,45 +103,21 @@ export class RelatedNotesView extends ItemView {
 			return;
 		}
 
-		// Check if note has UUID
-		const cache = this.app.metadataCache.getFileCache(activeFile);
-		const uuid =
-			cache?.frontmatter?.[this.plugin.settings.requiredFrontmatterKey];
-		if (!uuid) {
-			container.createDiv({
-				text: "Note has no UUID",
-				cls: "pkm-rag-empty-state",
-			});
-			return;
-		}
-
-		// Check if note is embedded
-		const chunks = this.plugin.vectorStore.getChunksByTitle(
-			activeFile.basename
-		);
-		if (chunks.length === 0) {
-			container.createDiv({
-				text: 'Note not embedded yet. Run "Embed current note" or "Embed vault".',
-				cls: "pkm-rag-empty-state",
-			});
-			return;
-		}
-
 		container.createDiv({
 			text: "Finding related notes...",
 			cls: "pkm-rag-loading",
 		});
 
-		// Use setTimeout to let the UI update before the computation
-		setTimeout(() => {
-			const tags = this.selectedTags.length > 0 ? this.selectedTags : undefined;
-			const similar = findSimilarNotes(
+		try {
+			const collection = this.selectedCollection || undefined;
+			const similar = await findSimilarNotes(
 				activeFile.basename,
-				this.plugin.vectorStore,
+				this.plugin.qmdClient,
+				this.app,
 				this.filterLinked,
 				this.plugin.settings.similarTopK,
 				this.plugin.settings.similarityThreshold,
-				tags
+				collection
 			);
 
 			container.empty();
@@ -182,6 +164,12 @@ export class RelatedNotesView extends ItemView {
 					});
 				}
 			}
-		}, 0);
+		} catch (e) {
+			container.empty();
+			container.createDiv({
+				text: `Error: ${e instanceof Error ? e.message : String(e)}`,
+				cls: "pkm-rag-empty-state",
+			});
+		}
 	}
 }

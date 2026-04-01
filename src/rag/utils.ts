@@ -1,12 +1,11 @@
-import { OllamaClient } from "../embedding/ollamaClient";
+import { OllamaChatClient } from "../ollama/chatClient";
 import { SourceInfo } from "../types";
 
 /**
  * Execute a chat completion with optional streaming support.
- * Replaces the repeated if/else streaming pattern across all mode handlers.
  */
 export async function chatWithOptionalStreaming(
-	ollamaClient: OllamaClient,
+	ollamaClient: OllamaChatClient,
 	messages: { role: string; content: string }[],
 	enableStreaming: boolean,
 	onToken?: (token: string) => void
@@ -32,7 +31,6 @@ export function deduplicateSources(sources: SourceInfo[]): SourceInfo[] {
 
 /**
  * Format a source header string for inclusion in LLM context.
- * Handles variant formats across retrieval and mode handlers.
  */
 export function formatSourceHeader(
 	title: string,

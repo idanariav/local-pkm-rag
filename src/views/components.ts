@@ -54,7 +54,7 @@ export async function renderMarkdown(
 
 /**
  * Shared chip-based multi-select dropdown with search filtering.
- * Used by both createTagFilter and createNoteSelector (multi-select mode).
+ * Used by both createCollectionFilter and createNoteSelector (multi-select mode).
  */
 function createChipSelector(
 	container: HTMLElement,
@@ -145,20 +145,34 @@ function createChipSelector(
 	};
 }
 
-/** Create a multi-select tag filter with chips and dropdown. */
-export function createTagFilter(
+/** Create a collection filter dropdown. */
+export function createCollectionFilter(
 	container: HTMLElement,
-	tags: string[],
-	onChange: (selected: string[]) => void
+	collections: string[],
+	defaultCollection: string,
+	onChange: (selected: string) => void
 ): { cleanup: () => void } {
-	const wrapper = container.createDiv({ cls: "pkm-rag-tag-filter" });
+	const wrapper = container.createDiv({ cls: "pkm-rag-collection-filter" });
 	wrapper.createEl("small", {
-		text: "Filter by tags",
-		cls: "pkm-rag-tag-filter-label",
+		text: "Collection",
+		cls: "pkm-rag-collection-filter-label",
 	});
 
-	const { cleanup } = createChipSelector(wrapper, tags, "Search tags...", onChange);
-	return { cleanup };
+	const select = wrapper.createEl("select", {
+		cls: "pkm-rag-collection-select",
+	});
+
+	select.createEl("option", { value: "", text: "All collections" });
+	for (const col of collections) {
+		select.createEl("option", { value: col, text: col });
+	}
+
+	select.value = defaultCollection;
+	select.addEventListener("change", () => {
+		onChange(select.value);
+	});
+
+	return { cleanup: () => {} };
 }
 
 /** Create a searchable note selector dropdown. */

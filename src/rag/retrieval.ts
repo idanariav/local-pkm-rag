@@ -1,45 +1,119 @@
-import { VectorStore } from "../embedding/vectorStore";
-import { OllamaClient } from "../embedding/ollamaClient";
+import { App, TFile } from "obsidian";
+import { QmdClient } from "../qmd/qmdClient";
 import { RetrievalResult, SimilarNote, SourceInfo } from "../types";
+import { PkmRagSettings, resolveParseSettings } from "../settings";
+import { extractSectionByHeading } from "../markdownParser";
 import { formatSourceHeader } from "./utils";
 
 /**
- * Retrieve relevant context from the vector store via semantic search.
+ * Read note content from vault and apply section extraction based on settings.
+ * Returns the extracted section content (or full content if mode is "full").
+ */
+async function extractNoteContent(
+	filePath: string,
+	app: App,
+	settings: PkmRagSettings
+): Promise<{ content: string; description: string } | null> {
+	const file = app.vault.getAbstractFileByPath(filePath);
+	if (!(file instanceof TFile)) return null;
+
+	const fullContent = await app.vault.read(file);
+	const cache = app.metadataCache.getFileCache(file);
+	const description = cache?.frontmatter?.[settings.descriptionFrontmatterKey] || "";
+
+	const parseSettings = resolveParseSettings(filePath, settings);
+
+	let content: string;
+	if (parseSettings.contentMode === "section") {
+		const section = extractSectionByHeading(
+			fullContent,
+			parseSettings.noteSectionHeaderName,
+			parseSettings.noteSectionHeaderLevel
+		);
+		content = section || fullContent;
+	} else {
+		// Strip frontmatter for full mode
+		const fmEnd = fullContent.indexOf("---", 3);
+		content = fmEnd !== -1 ? fullContent.substring(fmEnd + 3).trim() : fullContent;
+	}
+
+	return { content, description: String(description).slice(0, 500) };
+}
+
+/**
+ * Resolve a QMD file path to a vault-relative file path.
+ * QMD returns paths relative to the collection root; we need vault-relative paths.
+ */
+function resolveQmdFileToVaultPath(qmdFile: string, app: App): string | null {
+	// QMD returns paths like "collection_name/relative/path.md"
+	// Try to find the file by matching the basename and path suffix
+	const allFiles = app.vault.getMarkdownFiles();
+	for (const file of allFiles) {
+		if (file.path.endsWith(qmdFile) || file.path === qmdFile) {
+			return file.path;
+		}
+	}
+	// Try matching just the filename
+	const basename = qmdFile.split("/").pop() || qmdFile;
+	for (const file of allFiles) {
+		if (file.basename + ".md" === basename || file.basename === basename.replace(/\.md$/, "")) {
+			return file.path;
+		}
+	}
+	return null;
+}
+
+/**
+ * Retrieve relevant context from QMD via semantic search.
  * Returns formatted context string and deduplicated source metadata.
  */
 export async function retrieveContext(
 	query: string,
-	vectorStore: VectorStore,
-	ollamaClient: OllamaClient,
+	qmdClient: QmdClient,
+	app: App,
+	settings: PkmRagSettings,
 	nResults: number,
 	threshold: number,
-	filterTags?: string[]
+	collection?: string
 ): Promise<RetrievalResult> {
-	const queryEmbedding = await ollamaClient.embed(query);
-	const tagSet = filterTags && filterTags.length > 0 ? new Set(filterTags) : undefined;
-	const results = vectorStore.search(queryEmbedding, nResults, undefined, tagSet);
+	const searchCollection = collection || settings.defaultCollection || undefined;
+	const results = await qmdClient.vectorSearch(query, {
+		limit: nResults,
+		minScore: threshold,
+		collection: searchCollection,
+	});
 
 	const contextParts: string[] = [];
 	const sources: SourceInfo[] = [];
 	const seenTitles = new Set<string>();
 
-	for (const { chunk, similarity } of results) {
-		if (similarity < threshold) continue;
+	for (const result of results) {
+		const title = result.title || "Unknown";
+		const vaultPath = resolveQmdFileToVaultPath(result.file, app);
 
-		const title = chunk.metadata.title || "Unknown";
-		const description = chunk.metadata.description || "";
+		// Try to extract section content from the actual note file
+		let content = result.snippet;
+		let description = "";
+
+		if (vaultPath) {
+			const extracted = await extractNoteContent(vaultPath, app, settings);
+			if (extracted) {
+				content = extracted.content;
+				description = extracted.description;
+			}
+		}
 
 		const header = formatSourceHeader(title, description, {
 			descriptionSeparator: " | ",
 		});
-		contextParts.push(`${header}\n${chunk.text}`);
+		contextParts.push(`${header}\n${content}`);
 
 		if (!seenTitles.has(title)) {
 			seenTitles.add(title);
 			sources.push({
 				title,
 				description,
-				filePath: chunk.metadata.filePath,
+				filePath: vaultPath || result.file,
 			});
 		}
 	}
@@ -52,77 +126,78 @@ export async function retrieveContext(
 
 /**
  * Find notes semantically similar to the given note title.
- * Uses the first chunk's stored embedding (no Ollama call needed).
- * Optionally filters out notes that are already linked.
+ * Uses QMD vector search and Obsidian metadata for link filtering.
  */
-export function findSimilarNotes(
+export async function findSimilarNotes(
 	title: string,
-	vectorStore: VectorStore,
+	qmdClient: QmdClient,
+	app: App,
 	filterLinked: boolean,
 	topK: number,
 	threshold: number,
-	filterTags?: string[]
-): SimilarNote[] {
-	const targetChunks = vectorStore.getChunksByTitle(title);
-	if (targetChunks.length === 0) return [];
-
-	const targetUuid = targetChunks[0].metadata.uuid;
-	const queryEmbedding = targetChunks[0].embedding;
+	collection?: string
+): Promise<SimilarNote[]> {
+	const searchCollection = collection || undefined;
+	const results = await qmdClient.vectorSearch(title, {
+		limit: topK + 20,
+		minScore: threshold,
+		collection: searchCollection,
+	});
 
 	// Build set of linked titles if filtering
 	const linkedTitles = new Set<string>();
 	if (filterLinked) {
-		// Outgoing links from the target note
-		const outgoingStr = targetChunks[0].metadata.outgoingLinks || "";
-		if (outgoingStr) {
-			for (const link of outgoingStr.split(",")) {
-				const trimmed = link.trim();
-				if (trimmed) linkedTitles.add(trimmed);
+		const activeFile = app.workspace.getActiveFile();
+		if (activeFile) {
+			// Outgoing links
+			const resolved = app.metadataCache.resolvedLinks[activeFile.path];
+			if (resolved) {
+				for (const linkedPath of Object.keys(resolved)) {
+					const linkedFile = app.vault.getAbstractFileByPath(linkedPath);
+					if (linkedFile instanceof TFile) {
+						linkedTitles.add(linkedFile.basename);
+					}
+				}
 			}
-		}
 
-		// Incoming links: find notes whose outgoingLinks contain this title
-		const allTitles = vectorStore.getAllTitles();
-		for (const otherTitle of allTitles) {
-			if (otherTitle === title) continue;
-			const otherChunks = vectorStore.getChunksByTitle(otherTitle);
-			if (otherChunks.length === 0) continue;
-			const otherLinks = otherChunks[0].metadata.outgoingLinks || "";
-			const links = otherLinks
-				.split(",")
-				.map((l) => l.trim())
-				.filter(Boolean);
-			if (links.includes(title)) {
-				linkedTitles.add(otherTitle);
+			// Incoming links (backlinks)
+			for (const [sourcePath, links] of Object.entries(app.metadataCache.resolvedLinks)) {
+				if (activeFile.path in links) {
+					const sourceFile = app.vault.getAbstractFileByPath(sourcePath);
+					if (sourceFile instanceof TFile) {
+						linkedTitles.add(sourceFile.basename);
+					}
+				}
 			}
 		}
 	}
 
-	// Search with over-fetch to account for filtering
-	const tagSet = filterTags && filterTags.length > 0 ? new Set(filterTags) : undefined;
-	const results = vectorStore.search(
-		queryEmbedding,
-		topK + 20,
-		new Set([targetUuid]),
-		tagSet
-	);
-
 	const similar: SimilarNote[] = [];
 	const seenTitles = new Set<string>();
 
-	for (const { chunk, similarity } of results) {
-		if (similarity < threshold) continue;
-
-		const noteTitle = chunk.metadata.title || "Unknown";
+	for (const result of results) {
+		const noteTitle = result.title || "Unknown";
+		if (noteTitle === title) continue;
 		if (seenTitles.has(noteTitle)) continue;
 		if (filterLinked && linkedTitles.has(noteTitle)) continue;
 
 		seenTitles.add(noteTitle);
+
+		const vaultPath = resolveQmdFileToVaultPath(result.file, app);
+		let description = "";
+		if (vaultPath) {
+			const file = app.vault.getAbstractFileByPath(vaultPath);
+			if (file instanceof TFile) {
+				const cache = app.metadataCache.getFileCache(file);
+				description = cache?.frontmatter?.Description || "";
+			}
+		}
+
 		similar.push({
 			title: noteTitle,
-			description: chunk.metadata.description || "",
-			similarity: Math.round(similarity * 1000) / 1000,
-			filePath: chunk.metadata.filePath,
+			description: String(description).slice(0, 200),
+			similarity: Math.round(result.score * 1000) / 1000,
+			filePath: vaultPath || result.file,
 		});
 
 		if (similar.length >= topK) break;

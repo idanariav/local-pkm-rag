@@ -132,70 +132,45 @@ __export(main_exports, {
   default: () => PkmRagPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian6 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/constants.ts
 var DEFAULTS = {
   OLLAMA_URL: "http://localhost:11434",
-  EMBED_MODEL: "nomic-embed-text",
   CHAT_MODEL: "llama3.1:8b",
-  EMBED_DIMENSIONS: 768,
-  CHUNK_SIZE: 800,
-  CHUNK_OVERLAP: 100,
-  MIN_CHUNK_LENGTH: 50,
-  CHUNK_SEPARATORS: ["\n## ", "\n### ", "\n\n", "\n1. ", "\n- ", "\n", ". ", " "],
-  CHUNK_SEPARATORS_NO_HEADINGS: ["\n\n", "\n1. ", "\n- ", "\n", ". ", " "],
   TOP_K: 5,
   SIMILARITY_THRESHOLD: 0.5,
   SIMILAR_TOP_K: 10,
   GAP_ANALYSIS_TOP_K: 15,
-  ENABLE_QUERY_REWRITE: false,
-  REDUNDANCY_THRESHOLD: 0.85,
+  REDUNDANCY_THRESHOLD: 0.5,
   CONTENT_MODE: "section",
   NOTES_SECTION_HEADER_NAME: "Notes",
   NOTES_SECTION_HEADER_LEVEL: 2,
-  REQUIRED_FRONTMATTER_KEY: "UUID",
-  MODIFIED_FRONTMATTER_KEY: "Modified",
   DESCRIPTION_FRONTMATTER_KEY: "Description",
   PROPERTY_WIKILINK_PATTERN: /\([A-Za-z]+::\s*\[\[(?:[^\]|]*\|)?([^\]]+)\]\]\)/g,
   WIKILINK_PATTERN: /\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/g,
   DATAVIEW_FIELD_PATTERN: /^\s*\w+::\s*/gm,
-  EXCLUDED_FOLDERS: ".obsidian, .trash",
-  EMBEDDINGS_FOLDER_PATH: ".pkm-embeddings",
-  AUTO_EMBED_ENABLED: true,
-  AUTO_EMBED_DEBOUNCE_SECONDS: 30
+  QMD_PATH: "qmd",
+  QMD_DEFAULT_COLLECTION: ""
 };
-var VECTOR_STORE_VERSION = 1;
-var EMBEDDINGS_FILENAME = "embeddings.json";
-var EMBED_CONCURRENCY = 3;
 
 // src/settings.ts
 var DEFAULT_SETTINGS = {
   ollamaUrl: DEFAULTS.OLLAMA_URL,
-  embedModel: DEFAULTS.EMBED_MODEL,
   chatModel: DEFAULTS.CHAT_MODEL,
-  embedDimensions: DEFAULTS.EMBED_DIMENSIONS,
   folderConfigs: [],
-  excludedFolders: DEFAULTS.EXCLUDED_FOLDERS,
   contentMode: DEFAULTS.CONTENT_MODE,
   noteSectionHeaderName: DEFAULTS.NOTES_SECTION_HEADER_NAME,
   noteSectionHeaderLevel: DEFAULTS.NOTES_SECTION_HEADER_LEVEL,
-  requiredFrontmatterKey: DEFAULTS.REQUIRED_FRONTMATTER_KEY,
-  modifiedFrontmatterKey: DEFAULTS.MODIFIED_FRONTMATTER_KEY,
   descriptionFrontmatterKey: DEFAULTS.DESCRIPTION_FRONTMATTER_KEY,
-  chunkSize: DEFAULTS.CHUNK_SIZE,
-  chunkOverlap: DEFAULTS.CHUNK_OVERLAP,
-  minChunkLength: DEFAULTS.MIN_CHUNK_LENGTH,
   topK: DEFAULTS.TOP_K,
   similarTopK: DEFAULTS.SIMILAR_TOP_K,
   gapAnalysisTopK: DEFAULTS.GAP_ANALYSIS_TOP_K,
   similarityThreshold: DEFAULTS.SIMILARITY_THRESHOLD,
-  enableQueryRewrite: DEFAULTS.ENABLE_QUERY_REWRITE,
   filterLinkedByDefault: false,
   enableStreaming: true,
-  embeddingsFolderPath: DEFAULTS.EMBEDDINGS_FOLDER_PATH,
-  enableAutoEmbed: DEFAULTS.AUTO_EMBED_ENABLED,
-  autoEmbedDebounceSeconds: DEFAULTS.AUTO_EMBED_DEBOUNCE_SECONDS
+  qmdPath: DEFAULTS.QMD_PATH,
+  defaultCollection: DEFAULTS.QMD_DEFAULT_COLLECTION
 };
 function findFolderConfig(filePath, folderConfigs) {
   let bestMatch;
@@ -222,24 +197,15 @@ function resolveParseSettings(filePath, settings) {
     noteSectionHeaderLevel: (_c = folderConfig == null ? void 0 : folderConfig.noteSectionHeaderLevel) != null ? _c : settings.noteSectionHeaderLevel
   };
 }
-function isFileInScope(filePath, folderConfigs) {
-  const folders = folderConfigs.map((c) => c.folder).filter(Boolean);
-  if (folders.length === 0)
-    return true;
-  return folders.some(
-    (folder) => filePath.startsWith(folder + "/") || filePath === folder
-  );
-}
 
 // src/settingsTab.ts
 var import_obsidian2 = require("obsidian");
 
-// src/embedding/ollamaClient.ts
+// src/ollama/chatClient.ts
 var import_obsidian = require("obsidian");
-var OllamaClient = class {
-  constructor(baseUrl, embedModel, chatModel) {
+var OllamaChatClient = class {
+  constructor(baseUrl, chatModel) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
-    this.embedModel = embedModel;
     this.chatModel = chatModel;
   }
   /** Check if Ollama is reachable. */
@@ -253,39 +219,6 @@ var OllamaClient = class {
     } catch (e) {
       return false;
     }
-  }
-  /** Embed a single text, returning the embedding vector. */
-  async embed(text3) {
-    const response = await (0, import_obsidian.requestUrl)({
-      url: `${this.baseUrl}/api/embeddings`,
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: this.embedModel,
-        prompt: text3
-      })
-    });
-    if (response.status !== 200) {
-      throw new Error(`Ollama embed failed: ${response.status}`);
-    }
-    return response.json.embedding;
-  }
-  /** Embed a batch of texts with concurrency control. */
-  async embedBatch(texts, onProgress) {
-    const results = new Array(texts.length);
-    let completed = 0;
-    for (let i = 0; i < texts.length; i += EMBED_CONCURRENCY) {
-      const batch = texts.slice(i, i + EMBED_CONCURRENCY);
-      const embeddings = await Promise.all(
-        batch.map((text3) => this.embed(text3))
-      );
-      for (let j = 0; j < embeddings.length; j++) {
-        results[i + j] = embeddings[j];
-      }
-      completed += batch.length;
-      onProgress == null ? void 0 : onProgress(completed, texts.length);
-    }
-    return results;
   }
   /** Send a chat completion request (non-streaming). */
   async chat(messages) {
@@ -378,10 +311,38 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
     );
   }
   display() {
-    var _a, _b, _c, _d;
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h3", { text: "Ollama Connection" });
+    containerEl.createEl("h3", { text: "QMD" });
+    this.addTextSetting(
+      containerEl,
+      "QMD path",
+      "Path to the qmd binary",
+      "qmd",
+      () => this.plugin.settings.qmdPath,
+      (v) => {
+        this.plugin.settings.qmdPath = v;
+      }
+    );
+    this.addTextSetting(
+      containerEl,
+      "Default collection",
+      "QMD collection to search by default (leave empty for all)",
+      "",
+      () => this.plugin.settings.defaultCollection,
+      (v) => {
+        this.plugin.settings.defaultCollection = v;
+      }
+    );
+    new import_obsidian2.Setting(containerEl).setName("Test QMD connection").setDesc("Check if QMD is reachable").addButton(
+      (btn) => btn.setButtonText("Test").onClick(async () => {
+        const ok2 = await this.plugin.qmdClient.isAvailable();
+        new import_obsidian2.Notice(
+          ok2 ? "QMD is connected and available." : "Cannot reach QMD. Is it installed?"
+        );
+      })
+    );
+    containerEl.createEl("h3", { text: "Ollama (Chat)" });
     this.addTextSetting(
       containerEl,
       "Ollama URL",
@@ -394,16 +355,6 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
     );
     this.addTextSetting(
       containerEl,
-      "Embedding model",
-      "Ollama model for generating embeddings",
-      "nomic-embed-text",
-      () => this.plugin.settings.embedModel,
-      (v) => {
-        this.plugin.settings.embedModel = v;
-      }
-    );
-    this.addTextSetting(
-      containerEl,
       "Chat model",
       "Ollama model for chat/generation",
       "llama3.1:8b",
@@ -412,20 +363,10 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
         this.plugin.settings.chatModel = v;
       }
     );
-    new import_obsidian2.Setting(containerEl).setName("Embedding dimensions").setDesc("Vector dimensions for the embedding model").addText(
-      (text3) => text3.setPlaceholder("768").setValue(String(this.plugin.settings.embedDimensions)).onChange(async (value) => {
-        const n = parseInt(value);
-        if (!isNaN(n) && n > 0) {
-          this.plugin.settings.embedDimensions = n;
-          await this.plugin.saveSettings();
-        }
-      })
-    );
-    new import_obsidian2.Setting(containerEl).setName("Test connection").setDesc("Check if Ollama is reachable").addButton(
+    new import_obsidian2.Setting(containerEl).setName("Test Ollama connection").setDesc("Check if Ollama is reachable").addButton(
       (btn) => btn.setButtonText("Test").onClick(async () => {
-        const client = new OllamaClient(
+        const client = new OllamaChatClient(
           this.plugin.settings.ollamaUrl,
-          this.plugin.settings.embedModel,
           this.plugin.settings.chatModel
         );
         const ok2 = await client.isAvailable();
@@ -434,44 +375,13 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
         );
       })
     );
-    containerEl.createEl("h3", { text: "Vault Folders" });
+    containerEl.createEl("h3", { text: "Section Extraction" });
     containerEl.createEl("p", {
-      text: "Configure which folders to embed. Leave empty to embed the entire vault. Per-folder overrides inherit from the global parsing defaults below.",
-      cls: "setting-item-description"
-    });
-    const folderListEl = containerEl.createDiv("pkm-folder-list");
-    this.renderFolderList(folderListEl);
-    new import_obsidian2.Setting(containerEl).addButton(
-      (btn) => btn.setButtonText("+ Add folder").onClick(async () => {
-        this.plugin.settings.folderConfigs.push({ folder: "" });
-        await this.plugin.saveSettings();
-        folderListEl.empty();
-        this.renderFolderList(folderListEl);
-      })
-    );
-    this.addTextSetting(
-      containerEl,
-      "Excluded folders",
-      "Comma-separated folder paths to exclude",
-      ".obsidian, .trash",
-      () => this.plugin.settings.excludedFolders,
-      (v) => {
-        this.plugin.settings.excludedFolders = v;
-      }
-    );
-    new import_obsidian2.Setting(containerEl).setName("Embeddings folder path").setDesc("Folder to store the embeddings database (relative to vault root)").addText(
-      (text3) => text3.setPlaceholder(".pkm-embeddings").setValue(this.plugin.settings.embeddingsFolderPath).onChange(async (value) => {
-        this.plugin.settings.embeddingsFolderPath = value || ".pkm-embeddings";
-        await this.plugin.saveSettings();
-      })
-    );
-    containerEl.createEl("h3", { text: "Parsing (Global Defaults)" });
-    containerEl.createEl("p", {
-      text: "These settings are used for all files unless overridden by a per-folder configuration above.",
+      text: "Controls which part of notes is used as context for the LLM. QMD finds relevant documents; these settings control what content is extracted from each result.",
       cls: "setting-item-description"
     });
     new import_obsidian2.Setting(containerEl).setName("Content mode").setDesc(
-      "'Section' extracts only the configured header section. 'Full' embeds entire note content."
+      "'Section' extracts only the configured header section. 'Full' uses entire note content."
     ).addDropdown(
       (dd) => dd.addOption("section", "Section only").addOption("full", "Full content").setValue(this.plugin.settings.contentMode).onChange(async (value) => {
         this.plugin.settings.contentMode = value;
@@ -498,55 +408,31 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
     );
     this.addTextSetting(
       containerEl,
-      "Required frontmatter key",
-      "Notes without this frontmatter key are skipped",
-      "UUID",
-      () => this.plugin.settings.requiredFrontmatterKey,
-      (v) => {
-        this.plugin.settings.requiredFrontmatterKey = v;
-      }
-    );
-    this.addTextSetting(
-      containerEl,
-      "Modified field key",
-      "Frontmatter key used for change detection",
-      "Modified",
-      () => this.plugin.settings.modifiedFrontmatterKey,
-      (v) => {
-        this.plugin.settings.modifiedFrontmatterKey = v;
-      }
-    );
-    this.addTextSetting(
-      containerEl,
       "Description field key",
-      "Frontmatter key for the note description (prepended to chunks)",
+      "Frontmatter key for the note description",
       "Description",
       () => this.plugin.settings.descriptionFrontmatterKey,
       (v) => {
         this.plugin.settings.descriptionFrontmatterKey = v;
       }
     );
-    containerEl.createEl("h3", { text: "Chunking" });
-    new import_obsidian2.Setting(containerEl).setName("Chunk size").setDesc("Maximum characters per chunk (200-2000)").addSlider(
-      (slider) => slider.setLimits(200, 2e3, 100).setValue(this.plugin.settings.chunkSize).setDynamicTooltip().onChange(async (value) => {
-        this.plugin.settings.chunkSize = value;
+    containerEl.createEl("h3", { text: "Per-Folder Overrides" });
+    containerEl.createEl("p", {
+      text: "Override section extraction settings for specific folders.",
+      cls: "setting-item-description"
+    });
+    const folderListEl = containerEl.createDiv("pkm-folder-list");
+    this.renderFolderList(folderListEl);
+    new import_obsidian2.Setting(containerEl).addButton(
+      (btn) => btn.setButtonText("+ Add folder").onClick(async () => {
+        this.plugin.settings.folderConfigs.push({ folder: "" });
         await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian2.Setting(containerEl).setName("Chunk overlap").setDesc("Character overlap between chunks (0-500)").addSlider(
-      (slider) => slider.setLimits(0, 500, 50).setValue(this.plugin.settings.chunkOverlap).setDynamicTooltip().onChange(async (value) => {
-        this.plugin.settings.chunkOverlap = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian2.Setting(containerEl).setName("Minimum chunk length").setDesc("Chunks shorter than this are discarded (10-200)").addSlider(
-      (slider) => slider.setLimits(10, 200, 10).setValue(this.plugin.settings.minChunkLength).setDynamicTooltip().onChange(async (value) => {
-        this.plugin.settings.minChunkLength = value;
-        await this.plugin.saveSettings();
+        folderListEl.empty();
+        this.renderFolderList(folderListEl);
       })
     );
     containerEl.createEl("h3", { text: "Retrieval" });
-    new import_obsidian2.Setting(containerEl).setName("Top K (Ask mode)").setDesc("Number of chunks retrieved for Q&A (1-20)").addSlider(
+    new import_obsidian2.Setting(containerEl).setName("Top K (Explore mode)").setDesc("Number of results retrieved for Q&A (1-20)").addSlider(
       (slider) => slider.setLimits(1, 20, 1).setValue(this.plugin.settings.topK).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.topK = value;
         await this.plugin.saveSettings();
@@ -558,14 +444,14 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian2.Setting(containerEl).setName("Top K (Gap analysis)").setDesc("Number of chunks for gap analysis (1-30)").addSlider(
+    new import_obsidian2.Setting(containerEl).setName("Top K (Gap analysis)").setDesc("Number of results for gap analysis (1-30)").addSlider(
       (slider) => slider.setLimits(1, 30, 1).setValue(this.plugin.settings.gapAnalysisTopK).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.gapAnalysisTopK = value;
         await this.plugin.saveSettings();
       })
     );
     new import_obsidian2.Setting(containerEl).setName("Similarity threshold").setDesc(
-      "Minimum similarity score to include results (0.0-1.0)"
+      "Minimum score to include results (0.0-1.0)"
     ).addSlider(
       (slider) => slider.setLimits(0, 100, 5).setValue(
         Math.round(
@@ -573,29 +459,6 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
         )
       ).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.similarityThreshold = value / 100;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian2.Setting(containerEl).setName("Enable query rewrite").setDesc(
-      "Expand queries with related terms for broader retrieval (may reduce precision)"
-    ).addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.enableQueryRewrite).onChange(async (value) => {
-        this.plugin.settings.enableQueryRewrite = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    containerEl.createEl("h3", { text: "Auto-embedding" });
-    new import_obsidian2.Setting(containerEl).setName("Enable auto-embedding").setDesc("Automatically embed notes when they are modified").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.enableAutoEmbed).onChange(async (value) => {
-        this.plugin.settings.enableAutoEmbed = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian2.Setting(containerEl).setName("Auto-embed debounce time").setDesc(
-      "Seconds to wait after a note is modified before embedding (1-60 seconds)"
-    ).addSlider(
-      (slider) => slider.setLimits(1, 60, 1).setValue(this.plugin.settings.autoEmbedDebounceSeconds).setDynamicTooltip().onChange(async (value) => {
-        this.plugin.settings.autoEmbedDebounceSeconds = value;
         await this.plugin.saveSettings();
       })
     );
@@ -614,32 +477,12 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    containerEl.createEl("h3", { text: "Actions" });
-    new import_obsidian2.Setting(containerEl).setName("Embed vault").setDesc("Run incremental embedding of all configured folders").addButton(
-      (btn) => btn.setButtonText("Embed Vault").setCta().onClick(async () => {
-        await this.plugin.embedVault(false);
-      })
-    );
-    new import_obsidian2.Setting(containerEl).setName("Force re-embed").setDesc(
-      "Clear all embeddings and re-embed from scratch. Use after changing model or chunk settings."
-    ).addButton(
-      (btn) => btn.setButtonText("Force Re-embed").setWarning().onClick(async () => {
-        await this.plugin.embedVault(true);
-      })
-    );
-    const statsEl = containerEl.createDiv("pkm-rag-stats");
-    const totalChunks = (_b = (_a = this.plugin.vectorStore) == null ? void 0 : _a.totalChunks) != null ? _b : 0;
-    const totalNotes = (_d = (_c = this.plugin.vectorStore) == null ? void 0 : _c.totalNotes) != null ? _d : 0;
-    statsEl.createEl("p", {
-      text: `Embedded: ${totalNotes} notes, ${totalChunks} chunks`,
-      cls: "setting-item-description"
-    });
   }
   renderFolderList(containerEl) {
     const configs = this.plugin.settings.folderConfigs;
     if (configs.length === 0) {
       containerEl.createEl("p", {
-        text: "No folders configured. Entire vault will be embedded.",
+        text: "No per-folder overrides configured.",
         cls: "setting-item-description"
       });
       return;
@@ -694,348 +537,101 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
   }
 };
 
-// src/embedding/vectorStore.ts
-function cosineSimilarity(a, b) {
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
+// src/qmd/qmdClient.ts
+var import_child_process = require("child_process");
+var QmdClient = class {
+  constructor(qmdPath) {
+    this.qmdPath = qmdPath;
   }
-  const denom = Math.sqrt(normA * normB);
-  return denom === 0 ? 0 : dot / denom;
-}
-var VectorStore = class {
-  constructor() {
-    this.chunks = /* @__PURE__ */ new Map();
-    this.uuidIndex = /* @__PURE__ */ new Map();
-    this.dirty = false;
-    this.storedModelName = "";
-    this.storedChunkSize = 0;
-    this.storedChunkOverlap = 0;
-    this.embeddingsFolderPath = "";
+  updatePath(qmdPath) {
+    this.qmdPath = qmdPath;
   }
-  // Configurable path for embeddings storage
-  get totalChunks() {
-    return this.chunks.size;
-  }
-  get totalNotes() {
-    return this.uuidIndex.size;
-  }
-  /** Load embeddings from the plugin data directory. */
-  async loadFromDisk(plugin) {
+  /** Check if the QMD binary is available and responsive. */
+  async isAvailable() {
     try {
-      const path = this.getFilePath(plugin);
-      const exists = await plugin.app.vault.adapter.exists(path);
-      if (!exists)
-        return;
-      const raw = await plugin.app.vault.adapter.read(path);
-      const data = JSON.parse(raw);
-      if (data.version !== VECTOR_STORE_VERSION) {
-        console.log("PKM RAG: Vector store version mismatch, starting fresh");
-        return;
-      }
-      this.storedModelName = data.modelName || "";
-      this.storedChunkSize = data.chunkSize || 0;
-      this.storedChunkOverlap = data.chunkOverlap || 0;
-      this.chunks.clear();
-      this.uuidIndex.clear();
-      for (const chunk of data.chunks) {
-        this.chunks.set(chunk.id, chunk);
-        const existing = this.uuidIndex.get(chunk.metadata.uuid) || [];
-        existing.push(chunk.id);
-        this.uuidIndex.set(chunk.metadata.uuid, existing);
-      }
-      this.dirty = false;
-    } catch (e) {
-      console.error("PKM RAG: Failed to load vector store", e);
-    }
-  }
-  /** Save embeddings to the plugin data directory. */
-  async saveToDisk(plugin) {
-    if (!this.dirty)
-      return;
-    const data = {
-      version: VECTOR_STORE_VERSION,
-      modelName: this.storedModelName,
-      chunkSize: this.storedChunkSize,
-      chunkOverlap: this.storedChunkOverlap,
-      chunks: Array.from(this.chunks.values())
-    };
-    const path = this.getFilePath(plugin);
-    const dir = path.substring(0, path.lastIndexOf("/"));
-    if (!await plugin.app.vault.adapter.exists(dir)) {
-      await plugin.app.vault.adapter.mkdir(dir);
-    }
-    await plugin.app.vault.adapter.write(path, JSON.stringify(data));
-    this.dirty = false;
-  }
-  /** Check if the stored config matches current settings. Returns true if valid. */
-  validateConfig(modelName, chunkSize, chunkOverlap) {
-    if (this.chunks.size === 0)
+      await this.execQmd(["status"]);
       return true;
-    return this.storedModelName === modelName && this.storedChunkSize === chunkSize && this.storedChunkOverlap === chunkOverlap;
-  }
-  /** Update stored config values (call after embedding). */
-  setConfig(modelName, chunkSize, chunkOverlap) {
-    this.storedModelName = modelName;
-    this.storedChunkSize = chunkSize;
-    this.storedChunkOverlap = chunkOverlap;
-  }
-  /** Clear all stored data. */
-  clear() {
-    this.chunks.clear();
-    this.uuidIndex.clear();
-    this.dirty = true;
-  }
-  /** Insert or replace chunks for a note. */
-  upsertChunks(chunks) {
-    if (chunks.length === 0)
-      return;
-    const uuid = chunks[0].metadata.uuid;
-    this.deleteByUuid(uuid);
-    const ids = [];
-    for (const chunk of chunks) {
-      this.chunks.set(chunk.id, chunk);
-      ids.push(chunk.id);
+    } catch (e) {
+      return false;
     }
-    this.uuidIndex.set(uuid, ids);
-    this.dirty = true;
   }
-  /** Delete all chunks for a given UUID. */
-  deleteByUuid(uuid) {
-    const ids = this.uuidIndex.get(uuid);
-    if (!ids)
-      return;
-    for (const id of ids) {
-      this.chunks.delete(id);
-    }
-    this.uuidIndex.delete(uuid);
-    this.dirty = true;
+  /** Get QMD status including collections and document counts. */
+  async status() {
+    return this.execQmd(["status"]);
   }
-  /** Get all chunks for a given UUID. */
-  getByUuid(uuid) {
-    const ids = this.uuidIndex.get(uuid);
-    if (!ids)
+  /** Get available collection names from QMD status output. */
+  async getCollections() {
+    try {
+      const output = await this.execQmd(["collection", "list"]);
+      return output.split("\n").map((line) => line.trim()).filter(Boolean);
+    } catch (e) {
       return [];
-    return ids.map((id) => this.chunks.get(id)).filter(Boolean);
+    }
   }
-  /** Get UUID -> modified date mapping for incremental update detection. */
-  getEmbeddedState() {
-    const state = /* @__PURE__ */ new Map();
-    for (const [uuid, ids] of this.uuidIndex) {
-      if (ids.length > 0) {
-        const chunk = this.chunks.get(ids[0]);
-        if (chunk) {
-          state.set(uuid, chunk.metadata.modified);
+  /** Semantic vector search. */
+  async vectorSearch(query, options = {}) {
+    const args = this.buildSearchArgs("search", `vec:${query}`, options);
+    return this.execJsonSearch(args);
+  }
+  /** Deep search with query expansion and reranking. */
+  async deepSearch(query, options = {}) {
+    const args = this.buildSearchArgs("search", query, options);
+    return this.execJsonSearch(args);
+  }
+  /** Keyword/BM25 search. */
+  async search(query, options = {}) {
+    const args = this.buildSearchArgs("search", `lex:${query}`, options);
+    return this.execJsonSearch(args);
+  }
+  /** Retrieve a full document by file path or docid. */
+  async get(fileOrDocid) {
+    return this.execQmd(["get", fileOrDocid]);
+  }
+  buildSearchArgs(command, query, options) {
+    const args = [command, query, "--json"];
+    if (options.limit) {
+      args.push("-n", String(options.limit));
+    }
+    if (options.minScore) {
+      args.push("--min-score", String(options.minScore));
+    }
+    if (options.collection) {
+      args.push("-c", options.collection);
+    }
+    return args;
+  }
+  async execJsonSearch(args) {
+    const output = await this.execQmd(args);
+    if (!output.trim())
+      return [];
+    try {
+      const parsed = JSON.parse(output);
+      if (Array.isArray(parsed))
+        return parsed;
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+  execQmd(args) {
+    return new Promise((resolve, reject) => {
+      const cmd = `${this.qmdPath} ${args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`;
+      (0, import_child_process.exec)(cmd, { timeout: 3e4 }, (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(`QMD command failed: ${stderr || error.message}`));
+          return;
         }
-      }
-    }
-    return state;
-  }
-  /** Get all unique tags across stored chunks. */
-  getAllTags() {
-    const tags = /* @__PURE__ */ new Set();
-    for (const chunk of this.chunks.values()) {
-      const tagStr = chunk.metadata.tags || "";
-      if (tagStr) {
-        for (const tag of tagStr.split(",")) {
-          const trimmed = tag.trim();
-          if (trimmed)
-            tags.add(trimmed);
-        }
-      }
-    }
-    return Array.from(tags).sort();
-  }
-  /** Get all unique note titles. */
-  getAllTitles() {
-    const titles = /* @__PURE__ */ new Set();
-    for (const chunk of this.chunks.values()) {
-      if (chunk.metadata.title) {
-        titles.add(chunk.metadata.title);
-      }
-    }
-    return Array.from(titles).sort();
-  }
-  /** Get chunks matching a specific title. */
-  getChunksByTitle(title) {
-    const results = [];
-    for (const chunk of this.chunks.values()) {
-      if (chunk.metadata.title === title) {
-        results.push(chunk);
-      }
-    }
-    return results.sort((a, b) => a.metadata.chunkIndex - b.metadata.chunkIndex);
-  }
-  /** Find the UUID associated with a file path. */
-  getUuidByFilePath(filePath) {
-    for (const chunk of this.chunks.values()) {
-      if (chunk.metadata.filePath === filePath) {
-        return chunk.metadata.uuid;
-      }
-    }
-    return null;
-  }
-  /** Update file path in all chunks matching the old path. */
-  updateFilePath(oldPath, newPath) {
-    for (const chunk of this.chunks.values()) {
-      if (chunk.metadata.filePath === oldPath) {
-        chunk.metadata.filePath = newPath;
-        this.dirty = true;
-      }
-    }
-  }
-  /**
-   * Search for similar chunks by cosine similarity.
-   * Returns top K results sorted by similarity descending.
-   * Uses a min-heap approach to avoid sorting all results.
-   */
-  search(queryEmbedding, topK, excludeUuids, filterTags) {
-    const heap = [];
-    for (const chunk of this.chunks.values()) {
-      if (excludeUuids && excludeUuids.has(chunk.metadata.uuid)) {
-        continue;
-      }
-      if (filterTags && filterTags.size > 0) {
-        const chunkTags = (chunk.metadata.tags || "").split(",").map((t) => t.trim()).filter(Boolean);
-        if (!chunkTags.some((t) => filterTags.has(t))) {
-          continue;
-        }
-      }
-      const similarity = cosineSimilarity(queryEmbedding, chunk.embedding);
-      if (heap.length < topK) {
-        heap.push({ chunk, similarity });
-        if (heap.length === topK) {
-          heap.sort((a, b) => a.similarity - b.similarity);
-        }
-      } else if (similarity > heap[0].similarity) {
-        heap[0] = { chunk, similarity };
-        heap.sort((a, b) => a.similarity - b.similarity);
-      }
-    }
-    return heap.sort((a, b) => b.similarity - a.similarity);
-  }
-  /** Get all chunks from other notes whose outgoingLinks reference the target title or aliases. */
-  getChunksLinkingTo(title, aliases) {
-    const targets = /* @__PURE__ */ new Set([title]);
-    if (aliases) {
-      for (const alias of aliases) {
-        if (alias)
-          targets.add(alias);
-      }
-    }
-    const results = [];
-    for (const chunk of this.chunks.values()) {
-      if (chunk.metadata.title === title)
-        continue;
-      const links = (chunk.metadata.outgoingLinks || "").split(",").map((l) => l.trim()).filter(Boolean);
-      if (links.some((l) => targets.has(l))) {
-        results.push(chunk);
-      }
-    }
-    return results.sort(
-      (a, b) => a.metadata.title !== b.metadata.title ? a.metadata.title.localeCompare(b.metadata.title) : a.metadata.chunkIndex - b.metadata.chunkIndex
-    );
-  }
-  getFilePath(plugin) {
-    if (this.embeddingsFolderPath) {
-      return `${this.embeddingsFolderPath}/${EMBEDDINGS_FILENAME}`;
-    }
-    return `${plugin.manifest.dir}/${EMBEDDINGS_FILENAME}`;
-  }
-  /** Set the custom embeddings folder path. */
-  setEmbeddingsFolderPath(path) {
-    this.embeddingsFolderPath = path;
+        resolve(stdout);
+      });
+    });
   }
 };
 
-// src/embedding/chunker.ts
-var RecursiveCharacterTextSplitter = class {
-  constructor(chunkSize = DEFAULTS.CHUNK_SIZE, chunkOverlap = DEFAULTS.CHUNK_OVERLAP, separators = [...DEFAULTS.CHUNK_SEPARATORS]) {
-    this.chunkSize = chunkSize;
-    this.chunkOverlap = chunkOverlap;
-    this.separators = separators;
-  }
-  splitText(text3) {
-    return this._splitText(text3, this.separators);
-  }
-  _splitText(text3, separators) {
-    const finalChunks = [];
-    let separator = separators[separators.length - 1];
-    let newSeparators = [];
-    for (let i = 0; i < separators.length; i++) {
-      if (separators[i] === "") {
-        separator = separators[i];
-        break;
-      }
-      if (text3.includes(separators[i])) {
-        separator = separators[i];
-        newSeparators = separators.slice(i + 1);
-        break;
-      }
-    }
-    const splits = separator ? text3.split(separator).filter((s) => s !== "") : Array.from(text3);
-    let goodSplits = [];
-    const sep = separator;
-    for (const s of splits) {
-      if (s.length < this.chunkSize) {
-        goodSplits.push(s);
-      } else {
-        if (goodSplits.length > 0) {
-          const merged = this._mergeSplits(goodSplits, sep);
-          finalChunks.push(...merged);
-          goodSplits = [];
-        }
-        if (newSeparators.length === 0) {
-          finalChunks.push(s);
-        } else {
-          const subChunks = this._splitText(s, newSeparators);
-          finalChunks.push(...subChunks);
-        }
-      }
-    }
-    if (goodSplits.length > 0) {
-      const merged = this._mergeSplits(goodSplits, sep);
-      finalChunks.push(...merged);
-    }
-    return finalChunks;
-  }
-  _mergeSplits(splits, separator) {
-    const docs = [];
-    const currentDoc = [];
-    let total = 0;
-    for (const s of splits) {
-      const len = s.length;
-      const sepLen = currentDoc.length > 0 ? separator.length : 0;
-      if (total + len + sepLen > this.chunkSize && currentDoc.length > 0) {
-        const doc2 = this._joinDocs(currentDoc, separator);
-        if (doc2 !== null) {
-          docs.push(doc2);
-        }
-        while (total > this.chunkOverlap || total + len + sepLen > this.chunkSize && total > 0) {
-          if (currentDoc.length === 0)
-            break;
-          const removed = currentDoc.shift();
-          total -= removed.length + (currentDoc.length > 0 ? separator.length : 0);
-        }
-      }
-      currentDoc.push(s);
-      total += len + sepLen;
-    }
-    const doc = this._joinDocs(currentDoc, separator);
-    if (doc !== null) {
-      docs.push(doc);
-    }
-    return docs;
-  }
-  _joinDocs(docs, separator) {
-    const text3 = docs.join(separator).trim();
-    return text3 === "" ? null : text3;
-  }
-};
+// src/views/relatedNotesView.ts
+var import_obsidian5 = require("obsidian");
+
+// src/rag/retrieval.ts
+var import_obsidian3 = require("obsidian");
 
 // node_modules/bail/index.js
 function bail(error) {
@@ -7557,302 +7153,6 @@ function extractSectionByHeading(text3, headerName, headerLevel) {
   const content3 = text3.substring(sectionStart, sectionEnd).trim();
   return content3 || null;
 }
-function splitMarkdownByHeadings(text3) {
-  const tree = parseMarkdown(text3);
-  const headingOffsets = [];
-  for (const node2 of tree.children) {
-    if (node2.type === "heading" && node2.position) {
-      headingOffsets.push(node2.position.start.offset);
-    }
-  }
-  if (headingOffsets.length === 0) {
-    return text3.trim() ? [text3.trim()] : [];
-  }
-  const sections = [];
-  if (headingOffsets[0] > 0) {
-    const preContent = text3.substring(0, headingOffsets[0]).trim();
-    if (preContent) {
-      sections.push(preContent);
-    }
-  }
-  for (let i = 0; i < headingOffsets.length; i++) {
-    const start = headingOffsets[i];
-    const end = i + 1 < headingOffsets.length ? headingOffsets[i + 1] : text3.length;
-    const section = text3.substring(start, end).trim();
-    if (section) {
-      sections.push(section);
-    }
-  }
-  return sections;
-}
-
-// src/parser.ts
-var WIKILINK_TARGET_PATTERN = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g;
-var PROPERTY_WIKILINK_TARGET_PATTERN = /\([A-Za-z]+::\s*\[\[([^\]|]+)(?:\|[^\]]*)?\]\]\)/g;
-function extractFullContent(text3) {
-  let content3 = text3;
-  if (text3.startsWith("---")) {
-    const endIdx = text3.indexOf("---", 3);
-    if (endIdx !== -1) {
-      content3 = text3.substring(endIdx + 3).trim();
-    }
-  }
-  return content3 || null;
-}
-function extractWikilinks(text3) {
-  const links = /* @__PURE__ */ new Set();
-  let match;
-  const propPattern = new RegExp(PROPERTY_WIKILINK_TARGET_PATTERN.source, "g");
-  while ((match = propPattern.exec(text3)) !== null) {
-    links.add(match[1].trim());
-  }
-  const stdPattern = new RegExp(WIKILINK_TARGET_PATTERN.source, "g");
-  while ((match = stdPattern.exec(text3)) !== null) {
-    links.add(match[1].trim());
-  }
-  return Array.from(links).sort();
-}
-function cleanWikilinks(text3) {
-  let cleaned = text3.replace(DEFAULTS.PROPERTY_WIKILINK_PATTERN, "$1");
-  cleaned = cleaned.replace(DEFAULTS.WIKILINK_PATTERN, "$1");
-  cleaned = cleaned.replace(DEFAULTS.DATAVIEW_FIELD_PATTERN, "");
-  return cleaned;
-}
-function normalizeList(value) {
-  if (typeof value === "string")
-    return [value];
-  if (Array.isArray(value)) {
-    return value.filter((v) => v != null).map((v) => String(v).trim());
-  }
-  return [];
-}
-async function parseNote(file, app, settings) {
-  var _a, _b;
-  const cache = app.metadataCache.getFileCache(file);
-  const frontmatter = cache == null ? void 0 : cache.frontmatter;
-  const uuid = frontmatter == null ? void 0 : frontmatter[settings.requiredFrontmatterKey];
-  if (!uuid)
-    return null;
-  const text3 = await app.vault.cachedRead(file);
-  const parse2 = resolveParseSettings(file.path, settings);
-  let rawContent;
-  if (parse2.contentMode === "section") {
-    rawContent = extractSectionByHeading(text3, parse2.noteSectionHeaderName, parse2.noteSectionHeaderLevel);
-  } else {
-    rawContent = extractFullContent(text3);
-  }
-  if (!rawContent)
-    return null;
-  const outgoingLinks = extractWikilinks(rawContent);
-  const content3 = cleanWikilinks(rawContent);
-  const modified = String((_a = frontmatter == null ? void 0 : frontmatter[settings.modifiedFrontmatterKey]) != null ? _a : "");
-  const description = String((_b = frontmatter == null ? void 0 : frontmatter[settings.descriptionFrontmatterKey]) != null ? _b : "");
-  const aliases = normalizeList(frontmatter == null ? void 0 : frontmatter.aliases);
-  const tags = normalizeList(frontmatter == null ? void 0 : frontmatter.tags).map(
-    (t) => t.startsWith("#") ? t.slice(1) : t
-  );
-  return {
-    uuid: String(uuid),
-    modified,
-    title: file.basename,
-    description,
-    aliases,
-    tags,
-    content: content3,
-    filePath: file.path,
-    outgoingLinks
-  };
-}
-
-// src/embedding/embedPipeline.ts
-var EmbedPipeline = class {
-  constructor(vectorStore, ollamaClient, app, settings) {
-    this.vectorStore = vectorStore;
-    this.ollamaClient = ollamaClient;
-    this.app = app;
-    this.settings = settings;
-  }
-  updateSettings(settings) {
-    this.settings = settings;
-  }
-  /**
-   * Run the full embedding pipeline with incremental updates.
-   * If force is true, clears all existing embeddings first.
-   */
-  async embedVault(force = false, onProgress) {
-    if (force) {
-      this.vectorStore.clear();
-    } else if (!this.vectorStore.validateConfig(
-      this.settings.embedModel,
-      this.settings.chunkSize,
-      this.settings.chunkOverlap
-    )) {
-      onProgress == null ? void 0 : onProgress("Config changed, clearing embeddings...");
-      this.vectorStore.clear();
-    }
-    this.vectorStore.setConfig(
-      this.settings.embedModel,
-      this.settings.chunkSize,
-      this.settings.chunkOverlap
-    );
-    const files = this.getFilesToEmbed();
-    const embeddedState = this.vectorStore.getEmbeddedState();
-    const stats = {
-      new: 0,
-      updated: 0,
-      unchanged: 0,
-      skipped: 0,
-      deleted: 0,
-      errors: 0
-    };
-    const seenUuids = /* @__PURE__ */ new Set();
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      onProgress == null ? void 0 : onProgress(
-        `Processing ${i + 1}/${files.length}: ${file.basename}`
-      );
-      try {
-        const note = await parseNote(file, this.app, this.settings);
-        if (!note) {
-          stats.skipped++;
-          continue;
-        }
-        seenUuids.add(note.uuid);
-        await this.processNote(note, embeddedState, stats);
-      } catch (e) {
-        console.error(`PKM RAG: Error processing ${file.path}`, e);
-        stats.errors++;
-      }
-    }
-    const deletedUuids = /* @__PURE__ */ new Set();
-    for (const uuid of embeddedState.keys()) {
-      if (!seenUuids.has(uuid)) {
-        deletedUuids.add(uuid);
-      }
-    }
-    for (const uuid of deletedUuids) {
-      this.vectorStore.deleteByUuid(uuid);
-      stats.deleted++;
-    }
-    return stats;
-  }
-  /** Embed a single file. */
-  async embedFile(file) {
-    const stats = {
-      new: 0,
-      updated: 0,
-      unchanged: 0,
-      skipped: 0,
-      deleted: 0,
-      errors: 0
-    };
-    try {
-      const note = await parseNote(file, this.app, this.settings);
-      if (!note) {
-        stats.skipped++;
-        return stats;
-      }
-      const embeddedState = this.vectorStore.getEmbeddedState();
-      await this.processNote(note, embeddedState, stats);
-    } catch (e) {
-      console.error(`PKM RAG: Error embedding ${file.path}`, e);
-      stats.errors++;
-    }
-    return stats;
-  }
-  /** Check if a note needs embedding and process it. */
-  async processNote(note, embeddedState, stats) {
-    const existingModified = embeddedState.get(note.uuid);
-    if (existingModified === note.modified) {
-      stats.unchanged++;
-      return;
-    }
-    if (existingModified !== void 0) {
-      this.vectorStore.deleteByUuid(note.uuid);
-      stats.updated++;
-    } else {
-      stats.new++;
-    }
-    const storedChunks = await this.chunkAndEmbed(note);
-    if (storedChunks.length === 0) {
-      stats.skipped++;
-      return;
-    }
-    this.vectorStore.upsertChunks(storedChunks);
-  }
-  /** Chunk a note and generate embeddings for each chunk. */
-  async chunkAndEmbed(note) {
-    let fullText = note.content;
-    if (note.description) {
-      fullText = `${note.description}
-
-${note.content}`;
-    }
-    if (fullText.trim().length < this.settings.minChunkLength) {
-      return [];
-    }
-    const sections = splitMarkdownByHeadings(fullText);
-    const splitter = new RecursiveCharacterTextSplitter(
-      this.settings.chunkSize,
-      this.settings.chunkOverlap,
-      [...DEFAULTS.CHUNK_SEPARATORS_NO_HEADINGS]
-    );
-    const texts = sections.flatMap(
-      (section) => splitter.splitText(section)
-    );
-    const validTexts = texts.filter(
-      (t) => t.length >= this.settings.minChunkLength
-    );
-    if (validTexts.length === 0)
-      return [];
-    const embeddings = await this.ollamaClient.embedBatch(validTexts);
-    const storedChunks = [];
-    for (let i = 0; i < validTexts.length; i++) {
-      storedChunks.push({
-        id: `${note.uuid}_chunk_${i}`,
-        embedding: embeddings[i],
-        text: validTexts[i],
-        metadata: {
-          uuid: note.uuid,
-          modified: note.modified,
-          title: note.title,
-          description: note.description ? note.description.substring(0, 500) : "",
-          aliases: note.aliases.join(", "),
-          tags: note.tags.join(", "),
-          outgoingLinks: note.outgoingLinks.join(", "),
-          chunkIndex: i,
-          totalChunks: validTexts.length,
-          filePath: note.filePath
-        }
-      });
-    }
-    return storedChunks;
-  }
-  /** Get markdown files to embed based on settings. */
-  getFilesToEmbed() {
-    const allFiles = this.app.vault.getMarkdownFiles();
-    const includeFolders = this.settings.folderConfigs.map((c) => c.folder).filter(Boolean);
-    const excludeFolders = this.settings.excludedFolders.split(",").map((f) => f.trim()).filter(Boolean);
-    return allFiles.filter((file) => {
-      for (const excluded of excludeFolders) {
-        if (file.path.startsWith(excluded + "/") || file.path.startsWith(excluded)) {
-          return false;
-        }
-      }
-      if (includeFolders.length === 0)
-        return true;
-      for (const included of includeFolders) {
-        if (file.path.startsWith(included + "/") || file.path.startsWith(included)) {
-          return true;
-        }
-      }
-      return false;
-    });
-  }
-};
-
-// src/views/relatedNotesView.ts
-var import_obsidian4 = require("obsidian");
 
 // src/rag/utils.ts
 async function chatWithOptionalStreaming(ollamaClient, messages, enableStreaming, onToken) {
@@ -7886,29 +7186,77 @@ function formatSourceHeader(title, description, options) {
 }
 
 // src/rag/retrieval.ts
-async function retrieveContext(query, vectorStore, ollamaClient, nResults, threshold, filterTags) {
-  const queryEmbedding = await ollamaClient.embed(query);
-  const tagSet = filterTags && filterTags.length > 0 ? new Set(filterTags) : void 0;
-  const results = vectorStore.search(queryEmbedding, nResults, void 0, tagSet);
+async function extractNoteContent(filePath, app, settings) {
+  var _a;
+  const file = app.vault.getAbstractFileByPath(filePath);
+  if (!(file instanceof import_obsidian3.TFile))
+    return null;
+  const fullContent = await app.vault.read(file);
+  const cache = app.metadataCache.getFileCache(file);
+  const description = ((_a = cache == null ? void 0 : cache.frontmatter) == null ? void 0 : _a[settings.descriptionFrontmatterKey]) || "";
+  const parseSettings = resolveParseSettings(filePath, settings);
+  let content3;
+  if (parseSettings.contentMode === "section") {
+    const section = extractSectionByHeading(
+      fullContent,
+      parseSettings.noteSectionHeaderName,
+      parseSettings.noteSectionHeaderLevel
+    );
+    content3 = section || fullContent;
+  } else {
+    const fmEnd = fullContent.indexOf("---", 3);
+    content3 = fmEnd !== -1 ? fullContent.substring(fmEnd + 3).trim() : fullContent;
+  }
+  return { content: content3, description: String(description).slice(0, 500) };
+}
+function resolveQmdFileToVaultPath(qmdFile, app) {
+  const allFiles = app.vault.getMarkdownFiles();
+  for (const file of allFiles) {
+    if (file.path.endsWith(qmdFile) || file.path === qmdFile) {
+      return file.path;
+    }
+  }
+  const basename2 = qmdFile.split("/").pop() || qmdFile;
+  for (const file of allFiles) {
+    if (file.basename + ".md" === basename2 || file.basename === basename2.replace(/\.md$/, "")) {
+      return file.path;
+    }
+  }
+  return null;
+}
+async function retrieveContext(query, qmdClient, app, settings, nResults, threshold, collection) {
+  const searchCollection = collection || settings.defaultCollection || void 0;
+  const results = await qmdClient.vectorSearch(query, {
+    limit: nResults,
+    minScore: threshold,
+    collection: searchCollection
+  });
   const contextParts = [];
   const sources = [];
   const seenTitles = /* @__PURE__ */ new Set();
-  for (const { chunk, similarity } of results) {
-    if (similarity < threshold)
-      continue;
-    const title = chunk.metadata.title || "Unknown";
-    const description = chunk.metadata.description || "";
+  for (const result of results) {
+    const title = result.title || "Unknown";
+    const vaultPath = resolveQmdFileToVaultPath(result.file, app);
+    let content3 = result.snippet;
+    let description = "";
+    if (vaultPath) {
+      const extracted = await extractNoteContent(vaultPath, app, settings);
+      if (extracted) {
+        content3 = extracted.content;
+        description = extracted.description;
+      }
+    }
     const header = formatSourceHeader(title, description, {
       descriptionSeparator: " | "
     });
     contextParts.push(`${header}
-${chunk.text}`);
+${content3}`);
     if (!seenTitles.has(title)) {
       seenTitles.add(title);
       sources.push({
         title,
         description,
-        filePath: chunk.metadata.filePath
+        filePath: vaultPath || result.file
       });
     }
   }
@@ -7917,59 +7265,62 @@ ${chunk.text}`);
     sources
   };
 }
-function findSimilarNotes(title, vectorStore, filterLinked, topK, threshold, filterTags) {
-  const targetChunks = vectorStore.getChunksByTitle(title);
-  if (targetChunks.length === 0)
-    return [];
-  const targetUuid = targetChunks[0].metadata.uuid;
-  const queryEmbedding = targetChunks[0].embedding;
+async function findSimilarNotes(title, qmdClient, app, filterLinked, topK, threshold, collection) {
+  var _a;
+  const searchCollection = collection || void 0;
+  const results = await qmdClient.vectorSearch(title, {
+    limit: topK + 20,
+    minScore: threshold,
+    collection: searchCollection
+  });
   const linkedTitles = /* @__PURE__ */ new Set();
   if (filterLinked) {
-    const outgoingStr = targetChunks[0].metadata.outgoingLinks || "";
-    if (outgoingStr) {
-      for (const link of outgoingStr.split(",")) {
-        const trimmed = link.trim();
-        if (trimmed)
-          linkedTitles.add(trimmed);
+    const activeFile = app.workspace.getActiveFile();
+    if (activeFile) {
+      const resolved = app.metadataCache.resolvedLinks[activeFile.path];
+      if (resolved) {
+        for (const linkedPath of Object.keys(resolved)) {
+          const linkedFile = app.vault.getAbstractFileByPath(linkedPath);
+          if (linkedFile instanceof import_obsidian3.TFile) {
+            linkedTitles.add(linkedFile.basename);
+          }
+        }
       }
-    }
-    const allTitles = vectorStore.getAllTitles();
-    for (const otherTitle of allTitles) {
-      if (otherTitle === title)
-        continue;
-      const otherChunks = vectorStore.getChunksByTitle(otherTitle);
-      if (otherChunks.length === 0)
-        continue;
-      const otherLinks = otherChunks[0].metadata.outgoingLinks || "";
-      const links = otherLinks.split(",").map((l) => l.trim()).filter(Boolean);
-      if (links.includes(title)) {
-        linkedTitles.add(otherTitle);
+      for (const [sourcePath, links] of Object.entries(app.metadataCache.resolvedLinks)) {
+        if (activeFile.path in links) {
+          const sourceFile = app.vault.getAbstractFileByPath(sourcePath);
+          if (sourceFile instanceof import_obsidian3.TFile) {
+            linkedTitles.add(sourceFile.basename);
+          }
+        }
       }
     }
   }
-  const tagSet = filterTags && filterTags.length > 0 ? new Set(filterTags) : void 0;
-  const results = vectorStore.search(
-    queryEmbedding,
-    topK + 20,
-    /* @__PURE__ */ new Set([targetUuid]),
-    tagSet
-  );
   const similar = [];
   const seenTitles = /* @__PURE__ */ new Set();
-  for (const { chunk, similarity } of results) {
-    if (similarity < threshold)
+  for (const result of results) {
+    const noteTitle = result.title || "Unknown";
+    if (noteTitle === title)
       continue;
-    const noteTitle = chunk.metadata.title || "Unknown";
     if (seenTitles.has(noteTitle))
       continue;
     if (filterLinked && linkedTitles.has(noteTitle))
       continue;
     seenTitles.add(noteTitle);
+    const vaultPath = resolveQmdFileToVaultPath(result.file, app);
+    let description = "";
+    if (vaultPath) {
+      const file = app.vault.getAbstractFileByPath(vaultPath);
+      if (file instanceof import_obsidian3.TFile) {
+        const cache = app.metadataCache.getFileCache(file);
+        description = ((_a = cache == null ? void 0 : cache.frontmatter) == null ? void 0 : _a.Description) || "";
+      }
+    }
     similar.push({
       title: noteTitle,
-      description: chunk.metadata.description || "",
-      similarity: Math.round(similarity * 1e3) / 1e3,
-      filePath: chunk.metadata.filePath
+      description: String(description).slice(0, 200),
+      similarity: Math.round(result.score * 1e3) / 1e3,
+      filePath: vaultPath || result.file
     });
     if (similar.length >= topK)
       break;
@@ -7978,7 +7329,7 @@ function findSimilarNotes(title, vectorStore, filterLinked, topK, threshold, fil
 }
 
 // src/views/components.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 var MAX_DROPDOWN_ITEMS = 20;
 function createSourcesEl(container, sources, app) {
   if (sources.length === 0)
@@ -8012,7 +7363,7 @@ function createSourcesEl(container, sources, app) {
   }
 }
 async function renderMarkdown(content3, container, app, component) {
-  await import_obsidian3.MarkdownRenderer.render(app, content3, container, "", component);
+  await import_obsidian4.MarkdownRenderer.render(app, content3, container, "", component);
 }
 function createChipSelector(container, items, placeholder, onChange) {
   const selected = /* @__PURE__ */ new Set();
@@ -8087,14 +7438,25 @@ function createChipSelector(container, items, placeholder, onChange) {
     cleanup: () => document.removeEventListener("click", onClickOutside)
   };
 }
-function createTagFilter(container, tags, onChange) {
-  const wrapper = container.createDiv({ cls: "pkm-rag-tag-filter" });
+function createCollectionFilter(container, collections, defaultCollection, onChange) {
+  const wrapper = container.createDiv({ cls: "pkm-rag-collection-filter" });
   wrapper.createEl("small", {
-    text: "Filter by tags",
-    cls: "pkm-rag-tag-filter-label"
+    text: "Collection",
+    cls: "pkm-rag-collection-filter-label"
   });
-  const { cleanup } = createChipSelector(wrapper, tags, "Search tags...", onChange);
-  return { cleanup };
+  const select = wrapper.createEl("select", {
+    cls: "pkm-rag-collection-select"
+  });
+  select.createEl("option", { value: "", text: "All collections" });
+  for (const col of collections) {
+    select.createEl("option", { value: col, text: col });
+  }
+  select.value = defaultCollection;
+  select.addEventListener("change", () => {
+    onChange(select.value);
+  });
+  return { cleanup: () => {
+  } };
 }
 function createNoteSelector(container, titles, placeholder, multiple, onChange) {
   const wrapper = container.createDiv({ cls: "pkm-rag-note-selector" });
@@ -8155,14 +7517,15 @@ function createNoteSelector(container, titles, placeholder, multiple, onChange) 
 
 // src/views/relatedNotesView.ts
 var RELATED_NOTES_VIEW_TYPE = "pkm-rag-related-notes";
-var RelatedNotesView = class extends import_obsidian4.ItemView {
+var RelatedNotesView = class extends import_obsidian5.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
-    this.selectedTags = [];
+    this.selectedCollection = "";
     this.resultsContainer = null;
     this.cleanupFns = [];
     this.plugin = plugin;
     this.filterLinked = plugin.settings.filterLinkedByDefault;
+    this.selectedCollection = plugin.settings.defaultCollection;
   }
   getViewType() {
     return RELATED_NOTES_VIEW_TYPE;
@@ -8193,15 +7556,20 @@ var RelatedNotesView = class extends import_obsidian4.ItemView {
       this.filterLinked = toggle.checked;
       this.refresh();
     });
-    const allTags = this.plugin.vectorStore.getAllTags();
-    if (allTags.length > 0) {
-      const tagFilterEl = container.createDiv({
-        cls: "pkm-rag-related-tag-filter"
+    const collections = await this.plugin.qmdClient.getCollections();
+    if (collections.length > 0) {
+      const collectionFilterEl = container.createDiv({
+        cls: "pkm-rag-related-collection-filter"
       });
-      const { cleanup } = createTagFilter(tagFilterEl, allTags, (tags) => {
-        this.selectedTags = tags;
-        this.refresh();
-      });
+      const { cleanup } = createCollectionFilter(
+        collectionFilterEl,
+        collections,
+        this.selectedCollection,
+        (collection) => {
+          this.selectedCollection = collection;
+          this.refresh();
+        }
+      );
       this.cleanupFns.push(cleanup);
     }
     this.resultsContainer = container.createDiv({
@@ -8216,7 +7584,6 @@ var RelatedNotesView = class extends import_obsidian4.ItemView {
     this.resultsContainer = null;
   }
   async refresh() {
-    var _a;
     if (!this.resultsContainer)
       return;
     const container = this.resultsContainer;
@@ -8229,38 +7596,20 @@ var RelatedNotesView = class extends import_obsidian4.ItemView {
       });
       return;
     }
-    const cache = this.app.metadataCache.getFileCache(activeFile);
-    const uuid = (_a = cache == null ? void 0 : cache.frontmatter) == null ? void 0 : _a[this.plugin.settings.requiredFrontmatterKey];
-    if (!uuid) {
-      container.createDiv({
-        text: "Note has no UUID",
-        cls: "pkm-rag-empty-state"
-      });
-      return;
-    }
-    const chunks = this.plugin.vectorStore.getChunksByTitle(
-      activeFile.basename
-    );
-    if (chunks.length === 0) {
-      container.createDiv({
-        text: 'Note not embedded yet. Run "Embed current note" or "Embed vault".',
-        cls: "pkm-rag-empty-state"
-      });
-      return;
-    }
     container.createDiv({
       text: "Finding related notes...",
       cls: "pkm-rag-loading"
     });
-    setTimeout(() => {
-      const tags = this.selectedTags.length > 0 ? this.selectedTags : void 0;
-      const similar = findSimilarNotes(
+    try {
+      const collection = this.selectedCollection || void 0;
+      const similar = await findSimilarNotes(
         activeFile.basename,
-        this.plugin.vectorStore,
+        this.plugin.qmdClient,
+        this.app,
         this.filterLinked,
         this.plugin.settings.similarTopK,
         this.plugin.settings.similarityThreshold,
-        tags
+        collection
       );
       container.empty();
       if (similar.length === 0) {
@@ -8300,12 +7649,21 @@ var RelatedNotesView = class extends import_obsidian4.ItemView {
           });
         }
       }
-    }, 0);
+    } catch (e) {
+      container.empty();
+      container.createDiv({
+        text: `Error: ${e instanceof Error ? e.message : String(e)}`,
+        cls: "pkm-rag-empty-state"
+      });
+    }
   }
 };
 
 // src/views/chatView.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian7 = require("obsidian");
+
+// src/rag/modes.ts
+var import_obsidian6 = require("obsidian");
 
 // src/rag/prompts.ts
 var EXPLORE_SYSTEM_PROMPT = `You are a knowledge assistant that answers questions using ONLY the provided context from personal notes.
@@ -8342,9 +7700,6 @@ RULES:
 - Steelman the opposing viewpoint using evidence from other notes when available.
 - Be constructive \u2014 the goal is to strengthen understanding, not dismiss.
 - Cite source notes in [brackets].`;
-var QUERY_REWRITE_PROMPT = `Rewrite the following question to improve semantic search retrieval over a personal knowledge base. Add related terms, synonyms, and rephrasings that would help find relevant notes. Keep the rewritten query concise (under 50 words). Return ONLY the rewritten query, nothing else.
-
-Original question: {question}`;
 function formatExplorePrompt(context, question) {
   return `CONTEXT FROM NOTES:
 ${context}
@@ -8459,32 +7814,39 @@ Cite source notes in [brackets].`;
 }
 
 // src/rag/modes.ts
-async function rewriteQuery(question, ollamaClient) {
-  try {
-    const response = await ollamaClient.chat([
-      {
-        role: "user",
-        content: QUERY_REWRITE_PROMPT.replace("{question}", question)
-      }
-    ]);
-    const rewritten = response.trim();
-    return rewritten || question;
-  } catch (e) {
-    return question;
+async function readNoteContent(title, app, settings) {
+  var _a;
+  const allFiles = app.vault.getMarkdownFiles();
+  const file = allFiles.find((f) => f.basename === title);
+  if (!file)
+    return null;
+  const fullContent = await app.vault.read(file);
+  const cache = app.metadataCache.getFileCache(file);
+  const description = String(((_a = cache == null ? void 0 : cache.frontmatter) == null ? void 0 : _a[settings.descriptionFrontmatterKey]) || "").slice(0, 500);
+  const parseSettings = resolveParseSettings(file.path, settings);
+  let content3;
+  if (parseSettings.contentMode === "section") {
+    const section = extractSectionByHeading(
+      fullContent,
+      parseSettings.noteSectionHeaderName,
+      parseSettings.noteSectionHeaderLevel
+    );
+    content3 = section || fullContent;
+  } else {
+    const fmEnd = fullContent.indexOf("---", 3);
+    content3 = fmEnd !== -1 ? fullContent.substring(fmEnd + 3).trim() : fullContent;
   }
+  return { content: content3, description, filePath: file.path };
 }
-async function runExploreMode(question, vectorStore, ollamaClient, settings, onToken, filterTags) {
-  let searchQuery = question;
-  if (settings.enableQueryRewrite) {
-    searchQuery = await rewriteQuery(question, ollamaClient);
-  }
+async function runExploreMode(question, qmdClient, ollamaClient, app, settings, onToken, collection) {
   const { formattedContext, sources } = await retrieveContext(
-    searchQuery,
-    vectorStore,
-    ollamaClient,
+    question,
+    qmdClient,
+    app,
+    settings,
     settings.topK,
     settings.similarityThreshold,
-    filterTags
+    collection
   );
   if (!formattedContext) {
     return {
@@ -8505,17 +7867,18 @@ async function runExploreMode(question, vectorStore, ollamaClient, settings, onT
   );
   return { answer, sources };
 }
-async function runConnectMode(selectedNotes, vectorStore, ollamaClient, settings, onToken, filterTags) {
+async function runConnectMode(selectedNotes, qmdClient, ollamaClient, app, settings, onToken, collection) {
   const conceptContexts = /* @__PURE__ */ new Map();
   const allSources = [];
   for (const noteTitle of selectedNotes) {
     const { formattedContext, sources } = await retrieveContext(
       noteTitle,
-      vectorStore,
-      ollamaClient,
+      qmdClient,
+      app,
+      settings,
       settings.topK,
       settings.similarityThreshold,
-      filterTags
+      collection
     );
     conceptContexts.set(
       noteTitle,
@@ -8536,14 +7899,15 @@ async function runConnectMode(selectedNotes, vectorStore, ollamaClient, settings
   );
   return { answer, sources: deduplicateSources(allSources) };
 }
-async function runGapMode(topic, vectorStore, ollamaClient, settings, onToken, filterTags) {
+async function runGapMode(topic, qmdClient, ollamaClient, app, settings, onToken, collection) {
   const { formattedContext, sources } = await retrieveContext(
     topic,
-    vectorStore,
-    ollamaClient,
+    qmdClient,
+    app,
+    settings,
     settings.gapAnalysisTopK,
     settings.similarityThreshold,
-    filterTags
+    collection
   );
   if (!formattedContext) {
     return {
@@ -8564,51 +7928,51 @@ async function runGapMode(topic, vectorStore, ollamaClient, settings, onToken, f
   );
   return { answer, sources };
 }
-async function runDevilsAdvocateMode(title, vectorStore, ollamaClient, settings, onToken, filterTags) {
-  const targetChunks = vectorStore.getChunksByTitle(title);
-  if (targetChunks.length === 0) {
+async function runDevilsAdvocateMode(title, qmdClient, ollamaClient, app, settings, onToken, collection) {
+  const targetNote = await readNoteContent(title, app, settings);
+  if (!targetNote) {
     return {
       answer: `No note found with title "${title}".`,
       sources: []
     };
   }
-  const targetUuid = targetChunks[0].metadata.uuid;
-  const noteContext = targetChunks.map((c) => c.text).join("\n\n");
-  const tagSet = filterTags && filterTags.length > 0 ? new Set(filterTags) : void 0;
-  const results = vectorStore.search(
-    targetChunks[0].embedding,
-    settings.topK + 5,
-    /* @__PURE__ */ new Set([targetUuid]),
-    tagSet
-  );
+  const searchQuery = targetNote.description || title;
+  const searchCollection = collection || settings.defaultCollection || void 0;
+  const results = await qmdClient.vectorSearch(searchQuery, {
+    limit: settings.topK + 5,
+    minScore: settings.similarityThreshold,
+    collection: searchCollection
+  });
   const relatedParts = [];
   const sources = [
     {
       title,
-      description: targetChunks[0].metadata.description || "",
-      filePath: targetChunks[0].metadata.filePath
+      description: targetNote.description,
+      filePath: targetNote.filePath
     }
   ];
   const seenTitles = /* @__PURE__ */ new Set([title]);
-  for (const { chunk, similarity } of results) {
-    if (similarity < settings.similarityThreshold)
+  for (const result of results) {
+    const relTitle = result.title || "Unknown";
+    if (relTitle === title)
       continue;
-    const relTitle = chunk.metadata.title || "Unknown";
-    const description = chunk.metadata.description || "";
+    const relNote = await readNoteContent(relTitle, app, settings);
+    const content3 = (relNote == null ? void 0 : relNote.content) || result.snippet;
+    const description = (relNote == null ? void 0 : relNote.description) || "";
     const header = formatSourceHeader(relTitle, description);
     relatedParts.push(`${header}
-${chunk.text}`);
+${content3}`);
     if (!seenTitles.has(relTitle)) {
       seenTitles.add(relTitle);
       sources.push({
         title: relTitle,
         description,
-        filePath: chunk.metadata.filePath
+        filePath: (relNote == null ? void 0 : relNote.filePath) || result.file
       });
     }
   }
   const relatedContext = relatedParts.join("\n\n---\n\n");
-  const prompt = formatDevilsAdvocatePrompt(title, noteContext, relatedContext);
+  const prompt = formatDevilsAdvocatePrompt(title, targetNote.content, relatedContext);
   const messages = [
     { role: "system", content: DEVILS_ADVOCATE_SYSTEM_PROMPT },
     { role: "user", content: prompt }
@@ -8621,55 +7985,57 @@ ${chunk.text}`);
   );
   return { answer, sources };
 }
-async function runRedundancyMode(input, inputType, vectorStore, ollamaClient, settings, onToken, filterTags) {
-  let queryEmbedding;
+async function runRedundancyMode(input, inputType, qmdClient, ollamaClient, app, settings, onToken, collection) {
   let targetContent;
-  let excludeUuid;
+  let searchQuery;
+  let excludeTitle;
   if (inputType === "note") {
-    const chunks = vectorStore.getChunksByTitle(input);
-    if (chunks.length === 0) {
+    const note = await readNoteContent(input, app, settings);
+    if (!note) {
       return {
         answer: `No note found with title "${input}".`,
         sources: []
       };
     }
-    queryEmbedding = chunks[0].embedding;
-    targetContent = chunks.map((c) => c.text).join("\n\n");
-    excludeUuid = chunks[0].metadata.uuid;
+    targetContent = note.content;
+    searchQuery = note.description || input;
+    excludeTitle = input;
   } else {
-    queryEmbedding = await ollamaClient.embed(input);
     targetContent = input;
-    excludeUuid = void 0;
+    searchQuery = input;
+    excludeTitle = void 0;
   }
-  const tagSet = filterTags && filterTags.length > 0 ? new Set(filterTags) : void 0;
-  const results = vectorStore.search(
-    queryEmbedding,
-    settings.similarTopK,
-    excludeUuid ? /* @__PURE__ */ new Set([excludeUuid]) : void 0,
-    tagSet
-  );
+  const searchCollection = collection || settings.defaultCollection || void 0;
+  const results = await qmdClient.vectorSearch(searchQuery, {
+    limit: settings.similarTopK,
+    minScore: DEFAULTS.REDUNDANCY_THRESHOLD,
+    collection: searchCollection
+  });
   const similarParts = [];
   const scores = [];
   const sources = [];
   const seenTitles = /* @__PURE__ */ new Set();
-  for (const { chunk, similarity } of results) {
-    if (similarity < DEFAULTS.REDUNDANCY_THRESHOLD)
+  for (const result of results) {
+    const resultTitle = result.title || "Unknown";
+    if (resultTitle === excludeTitle)
       continue;
-    const title = chunk.metadata.title || "Unknown";
-    if (seenTitles.has(title))
+    if (seenTitles.has(resultTitle))
       continue;
-    seenTitles.add(title);
-    const score = Math.round(similarity * 1e3) / 1e3;
-    scores.push(`${title}: ${score}`);
-    const header = formatSourceHeader(title, chunk.metadata.description, {
+    seenTitles.add(resultTitle);
+    const score = Math.round(result.score * 1e3) / 1e3;
+    scores.push(`${resultTitle}: ${score}`);
+    const relNote = await readNoteContent(resultTitle, app, settings);
+    const content3 = (relNote == null ? void 0 : relNote.content) || result.snippet;
+    const description = (relNote == null ? void 0 : relNote.description) || "";
+    const header = formatSourceHeader(resultTitle, description, {
       similarity: score
     });
     similarParts.push(`${header}
-${chunk.text}`);
+${content3}`);
     sources.push({
-      title,
-      description: chunk.metadata.description || "",
-      filePath: chunk.metadata.filePath
+      title: resultTitle,
+      description,
+      filePath: (relNote == null ? void 0 : relNote.filePath) || result.file
     });
   }
   if (similarParts.length === 0) {
@@ -8698,26 +8064,31 @@ ${chunk.text}`);
   );
   return { answer, sources };
 }
-async function runUpdaterMode(title, vectorStore, ollamaClient, settings, onToken, filterTags) {
-  const targetChunks = vectorStore.getChunksByTitle(title);
-  if (targetChunks.length === 0) {
+async function runUpdaterMode(title, qmdClient, ollamaClient, app, settings, onToken, _collection) {
+  const targetNote = await readNoteContent(title, app, settings);
+  if (!targetNote) {
     return {
       answer: `No note found with title "${title}".`,
       sources: []
     };
   }
-  const noteContext = targetChunks.map((c) => c.text).join("\n\n");
-  const aliasStr = targetChunks[0].metadata.aliases || "";
-  const aliases = aliasStr.split(",").map((a) => a.trim()).filter(Boolean);
-  let backlinkChunks = vectorStore.getChunksLinkingTo(title, aliases);
-  if (filterTags && filterTags.length > 0) {
-    const tagSet = new Set(filterTags);
-    backlinkChunks = backlinkChunks.filter((chunk) => {
-      const chunkTags = (chunk.metadata.tags || "").split(",").map((t) => t.trim()).filter(Boolean);
-      return chunkTags.some((t) => tagSet.has(t));
-    });
+  const targetFile = app.vault.getAbstractFileByPath(targetNote.filePath);
+  if (!(targetFile instanceof import_obsidian6.TFile)) {
+    return {
+      answer: `Cannot find file for "${title}".`,
+      sources: []
+    };
   }
-  if (backlinkChunks.length === 0) {
+  const backlinkFiles = [];
+  for (const [sourcePath, links] of Object.entries(app.metadataCache.resolvedLinks)) {
+    if (targetNote.filePath in links) {
+      const sourceFile = app.vault.getAbstractFileByPath(sourcePath);
+      if (sourceFile instanceof import_obsidian6.TFile) {
+        backlinkFiles.push(sourceFile);
+      }
+    }
+  }
+  if (backlinkFiles.length === 0) {
     return {
       answer: `No other notes link to "${title}". There are no backlink insights to review.`,
       sources: []
@@ -8727,28 +8098,36 @@ async function runUpdaterMode(title, vectorStore, ollamaClient, settings, onToke
   const sources = [
     {
       title,
-      description: targetChunks[0].metadata.description || "",
-      filePath: targetChunks[0].metadata.filePath
+      description: targetNote.description,
+      filePath: targetNote.filePath
     }
   ];
   const seenTitles = /* @__PURE__ */ new Set([title]);
-  for (const chunk of backlinkChunks) {
-    const srcTitle = chunk.metadata.title || "Unknown";
-    const description = chunk.metadata.description || "";
-    const header = formatSourceHeader(srcTitle, description);
+  for (const blFile of backlinkFiles) {
+    const srcTitle = blFile.basename;
+    const blNote = await readNoteContent(srcTitle, app, settings);
+    if (!blNote)
+      continue;
+    const header = formatSourceHeader(srcTitle, blNote.description);
     backlinkParts.push(`${header}
-${chunk.text}`);
+${blNote.content}`);
     if (!seenTitles.has(srcTitle)) {
       seenTitles.add(srcTitle);
       sources.push({
         title: srcTitle,
-        description,
-        filePath: chunk.metadata.filePath
+        description: blNote.description,
+        filePath: blNote.filePath
       });
     }
   }
+  if (backlinkParts.length === 0) {
+    return {
+      answer: `No backlink content could be extracted for "${title}".`,
+      sources: []
+    };
+  }
   const backlinkContext = backlinkParts.join("\n\n---\n\n");
-  const prompt = formatUpdaterPrompt(title, noteContext, backlinkContext);
+  const prompt = formatUpdaterPrompt(title, targetNote.content, backlinkContext);
   const messages = [
     { role: "system", content: UPDATER_SYSTEM_PROMPT },
     { role: "user", content: prompt }
@@ -8764,7 +8143,7 @@ ${chunk.text}`);
 
 // src/views/chatView.ts
 var CHAT_VIEW_TYPE = "pkm-rag-chat";
-var ChatView = class extends import_obsidian5.ItemView {
+var ChatView = class extends import_obsidian7.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.currentMode = "explore";
@@ -8778,11 +8157,12 @@ var ChatView = class extends import_obsidian5.ItemView {
     this.sendBtn = null;
     // Mode-specific state
     this.selectedNotes = [];
-    this.selectedTags = [];
+    this.selectedCollection = "";
     this.redundancyInputType = "note";
     this.cleanupFns = [];
     this.modeConfigCleanupFns = [];
     this.plugin = plugin;
+    this.selectedCollection = plugin.settings.defaultCollection;
   }
   getViewType() {
     return CHAT_VIEW_TYPE;
@@ -8831,16 +8211,10 @@ var ChatView = class extends import_obsidian5.ItemView {
       this.messages = [];
       this.renderMessages();
     });
-    const tagFilterEl = container.createDiv({
-      cls: "pkm-rag-chat-tag-filter"
+    const collectionFilterEl = container.createDiv({
+      cls: "pkm-rag-chat-collection-filter"
     });
-    const allTags = this.plugin.vectorStore.getAllTags();
-    if (allTags.length > 0) {
-      const { cleanup } = createTagFilter(tagFilterEl, allTags, (tags) => {
-        this.selectedTags = tags;
-      });
-      this.cleanupFns.push(cleanup);
-    }
+    this.initCollectionFilter(collectionFilterEl);
     this.modeConfigEl = container.createDiv({
       cls: "pkm-rag-chat-mode-config"
     });
@@ -8852,6 +8226,20 @@ var ChatView = class extends import_obsidian5.ItemView {
     });
     this.renderModeConfig();
     this.renderInputArea();
+  }
+  async initCollectionFilter(container) {
+    const collections = await this.plugin.qmdClient.getCollections();
+    if (collections.length > 0) {
+      const { cleanup } = createCollectionFilter(
+        container,
+        collections,
+        this.selectedCollection,
+        (collection) => {
+          this.selectedCollection = collection;
+        }
+      );
+      this.cleanupFns.push(cleanup);
+    }
   }
   async onClose() {
     for (const fn of this.cleanupFns)
@@ -8873,7 +8261,7 @@ var ChatView = class extends import_obsidian5.ItemView {
       fn();
     this.modeConfigCleanupFns = [];
     this.modeConfigEl.empty();
-    const titles = this.plugin.vectorStore.getAllTitles();
+    const titles = this.app.vault.getMarkdownFiles().map((f) => f.basename);
     switch (this.currentMode) {
       case "explore": {
         const tip = this.modeConfigEl.createDiv({
@@ -9132,67 +8520,73 @@ var ChatView = class extends import_obsidian5.ItemView {
         this.scrollToBottom();
       } : void 0;
       let result;
-      const tags = this.selectedTags.length > 0 ? this.selectedTags : void 0;
+      const collection = this.selectedCollection || void 0;
       switch (this.currentMode) {
         case "explore":
           result = await runExploreMode(
             userContent,
-            this.plugin.vectorStore,
+            this.plugin.qmdClient,
             this.plugin.ollamaClient,
+            this.app,
             this.plugin.settings,
             onToken,
-            tags
+            collection
           );
           break;
         case "connect":
           result = await runConnectMode(
             this.selectedNotes,
-            this.plugin.vectorStore,
+            this.plugin.qmdClient,
             this.plugin.ollamaClient,
+            this.app,
             this.plugin.settings,
             onToken,
-            tags
+            collection
           );
           break;
         case "gap":
           result = await runGapMode(
             userContent,
-            this.plugin.vectorStore,
+            this.plugin.qmdClient,
             this.plugin.ollamaClient,
+            this.app,
             this.plugin.settings,
             onToken,
-            tags
+            collection
           );
           break;
         case "devils_advocate":
           result = await runDevilsAdvocateMode(
             this.selectedNotes[0],
-            this.plugin.vectorStore,
+            this.plugin.qmdClient,
             this.plugin.ollamaClient,
+            this.app,
             this.plugin.settings,
             onToken,
-            tags
+            collection
           );
           break;
         case "redundancy":
           result = await runRedundancyMode(
             this.redundancyInputType === "note" ? this.selectedNotes[0] : userContent.replace("Check idea: ", ""),
             this.redundancyInputType,
-            this.plugin.vectorStore,
+            this.plugin.qmdClient,
             this.plugin.ollamaClient,
+            this.app,
             this.plugin.settings,
             onToken,
-            tags
+            collection
           );
           break;
         case "updater":
           result = await runUpdaterMode(
             this.selectedNotes[0],
-            this.plugin.vectorStore,
+            this.plugin.qmdClient,
             this.plugin.ollamaClient,
+            this.app,
             this.plugin.settings,
             onToken,
-            tags
+            collection
           );
           break;
       }
@@ -9263,33 +8657,27 @@ var ChatView = class extends import_obsidian5.ItemView {
 };
 
 // src/main.ts
-var PkmRagPlugin = class extends import_obsidian6.Plugin {
+var PkmRagPlugin = class extends import_obsidian8.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
-    this.vectorStore = new VectorStore();
-    this.ollamaClient = new OllamaClient(
+    this.qmdClient = new QmdClient(DEFAULT_SETTINGS.qmdPath);
+    this.ollamaClient = new OllamaChatClient(
       DEFAULT_SETTINGS.ollamaUrl,
-      DEFAULT_SETTINGS.embedModel,
       DEFAULT_SETTINGS.chatModel
     );
-    this.embedDebounceTimers = /* @__PURE__ */ new Map();
   }
   async onload() {
     await this.loadSettings();
-    this.ollamaClient = new OllamaClient(
+    this.qmdClient = new QmdClient(this.settings.qmdPath);
+    this.ollamaClient = new OllamaChatClient(
       this.settings.ollamaUrl,
-      this.settings.embedModel,
       this.settings.chatModel
     );
-    this.vectorStore.setEmbeddingsFolderPath(this.settings.embeddingsFolderPath);
-    await this.vectorStore.loadFromDisk(this);
-    this.embedPipeline = new EmbedPipeline(
-      this.vectorStore,
-      this.ollamaClient,
-      this.app,
-      this.settings
-    );
+    const qmdAvailable = await this.qmdClient.isAvailable();
+    if (!qmdAvailable) {
+      new import_obsidian8.Notice("QMD is not available. Please install QMD and configure the path in settings.");
+    }
     this.registerView(RELATED_NOTES_VIEW_TYPE, (leaf) => new RelatedNotesView(leaf, this));
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
     this.addSettingTab(new PkmRagSettingTab(this.app, this));
@@ -9303,74 +8691,23 @@ var PkmRagPlugin = class extends import_obsidian6.Plugin {
       name: "Open chat",
       callback: () => this.activateView(CHAT_VIEW_TYPE)
     });
-    this.addCommand({
-      id: "embed-vault",
-      name: "Embed vault",
-      callback: () => this.embedVault(false)
-    });
-    this.addCommand({
-      id: "embed-current",
-      name: "Embed current note",
-      callback: () => this.embedCurrentNote()
-    });
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
         this.refreshRelatedNotesView();
       })
     );
-    this.registerEvent(
-      this.app.vault.on("modify", (file) => {
-        if (this.settings.enableAutoEmbed && file instanceof import_obsidian6.TFile && file.extension === "md") {
-          this.debouncedEmbed(file);
-        }
-      })
-    );
-    this.registerEvent(
-      this.app.vault.on("delete", (file) => {
-        if (file instanceof import_obsidian6.TFile && file.extension === "md") {
-          this.handleFileDelete(file);
-        }
-      })
-    );
-    this.registerEvent(
-      this.app.vault.on("rename", (file, oldPath) => {
-        if (file instanceof import_obsidian6.TFile && file.extension === "md") {
-          this.vectorStore.updateFilePath(oldPath, file.path);
-          this.vectorStore.saveToDisk(this);
-        }
-      })
-    );
-  }
-  onunload() {
-    for (const timer of this.embedDebounceTimers.values()) {
-      clearTimeout(timer);
-    }
-    this.embedDebounceTimers.clear();
-    this.vectorStore.saveToDisk(this);
   }
   async loadSettings() {
     const loaded = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
-    if (loaded && typeof loaded.foldersToEmbed === "string" && !loaded.folderConfigs) {
-      const oldFolders = loaded.foldersToEmbed.split(",").map((f) => f.trim()).filter(Boolean);
-      this.settings.folderConfigs = oldFolders.map((folder) => ({
-        folder
-      }));
-      delete this.settings.foldersToEmbed;
-      await this.saveData(this.settings);
-    }
   }
   async saveSettings() {
     await this.saveData(this.settings);
-    this.ollamaClient = new OllamaClient(
+    this.qmdClient.updatePath(this.settings.qmdPath);
+    this.ollamaClient = new OllamaChatClient(
       this.settings.ollamaUrl,
-      this.settings.embedModel,
       this.settings.chatModel
     );
-    this.vectorStore.setEmbeddingsFolderPath(this.settings.embeddingsFolderPath);
-    if (this.embedPipeline) {
-      this.embedPipeline.updateSettings(this.settings);
-    }
   }
   async activateView(viewType) {
     const existing = this.app.workspace.getLeavesOfType(viewType);
@@ -9382,74 +8719,6 @@ var PkmRagPlugin = class extends import_obsidian6.Plugin {
     if (leaf) {
       await leaf.setViewState({ type: viewType, active: true });
       this.app.workspace.revealLeaf(leaf);
-    }
-  }
-  async embedVault(force) {
-    const notice = new import_obsidian6.Notice("Embedding vault...", 0);
-    try {
-      const stats = await this.embedPipeline.embedVault(force, (msg) => {
-        notice.setMessage(msg);
-      });
-      notice.setMessage("Saving embeddings...");
-      await this.vectorStore.saveToDisk(this);
-      notice.hide();
-      new import_obsidian6.Notice(
-        `Embedding complete: ${stats.new} new, ${stats.updated} updated, ${stats.unchanged} unchanged, ${stats.skipped} skipped, ${stats.deleted} deleted, ${stats.errors} errors`,
-        1e4
-      );
-      this.refreshRelatedNotesView();
-    } catch (e) {
-      notice.hide();
-      new import_obsidian6.Notice(`Embedding failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-  async embedCurrentNote() {
-    const file = this.app.workspace.getActiveFile();
-    if (!file) {
-      new import_obsidian6.Notice("No active file");
-      return;
-    }
-    const notice = new import_obsidian6.Notice(`Embedding ${file.basename}...`, 0);
-    try {
-      const stats = await this.embedPipeline.embedFile(file);
-      notice.hide();
-      if (stats.new + stats.updated > 0) {
-        new import_obsidian6.Notice(`Embedded ${file.basename}`);
-      } else if (stats.skipped > 0) {
-        new import_obsidian6.Notice(`Skipped ${file.basename} (no UUID or content)`);
-      } else {
-        new import_obsidian6.Notice(`${file.basename} is unchanged`);
-      }
-      this.refreshRelatedNotesView();
-    } catch (e) {
-      notice.hide();
-      new import_obsidian6.Notice(`Failed to embed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-  debouncedEmbed(file) {
-    if (!isFileInScope(file.path, this.settings.folderConfigs))
-      return;
-    const existing = this.embedDebounceTimers.get(file.path);
-    if (existing) {
-      clearTimeout(existing);
-    }
-    const debounceMs = this.settings.autoEmbedDebounceSeconds * 1e3;
-    const timer = setTimeout(async () => {
-      this.embedDebounceTimers.delete(file.path);
-      try {
-        await this.embedPipeline.embedFile(file);
-        await this.vectorStore.saveToDisk(this);
-        this.refreshRelatedNotesView();
-      } catch (e) {
-      }
-    }, debounceMs);
-    this.embedDebounceTimers.set(file.path, timer);
-  }
-  handleFileDelete(file) {
-    const uuid = this.vectorStore.getUuidByFilePath(file.path);
-    if (uuid) {
-      this.vectorStore.deleteByUuid(uuid);
-      this.vectorStore.saveToDisk(this);
     }
   }
   refreshRelatedNotesView() {

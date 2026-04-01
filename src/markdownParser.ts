@@ -1,6 +1,6 @@
 import { unified } from "unified";
 import remarkParse from "remark-parse";
-import type { Heading, Root, RootContent } from "mdast";
+import type { Heading, Root } from "mdast";
 
 /**
  * Extract plain text from a heading AST node's children.
@@ -48,7 +48,6 @@ export function extractSectionByHeading(
 		const heading = node as Heading;
 
 		if (sectionStart !== null) {
-			// We found the start — look for the next heading at same or higher level
 			if (heading.depth <= level) {
 				sectionEnd = heading.position!.start.offset!;
 				break;
@@ -57,7 +56,6 @@ export function extractSectionByHeading(
 			heading.depth === level &&
 			headingText(heading).trim() === headerText
 		) {
-			// Found the target heading — content starts after the heading line
 			sectionStart = heading.position!.end.offset!;
 		}
 	}
@@ -67,53 +65,4 @@ export function extractSectionByHeading(
 
 	const content = text.substring(sectionStart, sectionEnd).trim();
 	return content || null;
-}
-
-/**
- * Split markdown text into sections at heading boundaries using AST parsing.
- *
- * Each section includes its heading line (if any) plus content until the
- * next heading. Content before the first heading is returned as the first
- * section if non-empty.
- *
- * Headings inside code blocks are correctly ignored by the AST parser.
- */
-export function splitMarkdownByHeadings(text: string): string[] {
-	const tree = parseMarkdown(text);
-
-	// Collect offsets where headings start
-	const headingOffsets: number[] = [];
-	for (const node of tree.children) {
-		if (node.type === "heading" && node.position) {
-			headingOffsets.push(node.position.start.offset!);
-		}
-	}
-
-	if (headingOffsets.length === 0) {
-		// No headings — return the full text as a single section
-		return text.trim() ? [text.trim()] : [];
-	}
-
-	const sections: string[] = [];
-
-	// Content before the first heading
-	if (headingOffsets[0] > 0) {
-		const preContent = text.substring(0, headingOffsets[0]).trim();
-		if (preContent) {
-			sections.push(preContent);
-		}
-	}
-
-	// Each heading section
-	for (let i = 0; i < headingOffsets.length; i++) {
-		const start = headingOffsets[i];
-		const end =
-			i + 1 < headingOffsets.length ? headingOffsets[i + 1] : text.length;
-		const section = text.substring(start, end).trim();
-		if (section) {
-			sections.push(section);
-		}
-	}
-
-	return sections;
 }

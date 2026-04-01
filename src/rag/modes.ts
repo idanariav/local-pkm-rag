@@ -1,9 +1,11 @@
-import { VectorStore } from "../embedding/vectorStore";
-import { OllamaClient } from "../embedding/ollamaClient";
-import { PkmRagSettings } from "../settings";
+import { App, TFile } from "obsidian";
+import { QmdClient } from "../qmd/qmdClient";
+import { OllamaChatClient } from "../ollama/chatClient";
+import { PkmRagSettings, resolveParseSettings } from "../settings";
 import { SourceInfo } from "../types";
 import { DEFAULTS } from "../constants";
 import { retrieveContext } from "./retrieval";
+import { extractSectionByHeading } from "../markdownParser";
 import {
 	EXPLORE_SYSTEM_PROMPT,
 	CONNECT_SYSTEM_PROMPT,
@@ -11,7 +13,6 @@ import {
 	DEVILS_ADVOCATE_SYSTEM_PROMPT,
 	REDUNDANCY_SYSTEM_PROMPT,
 	UPDATER_SYSTEM_PROMPT,
-	QUERY_REWRITE_PROMPT,
 	formatExplorePrompt,
 	formatConnectPrompt,
 	formatGapPrompt,
@@ -30,47 +31,59 @@ export interface ModeResult {
 	sources: SourceInfo[];
 }
 
-/** Rewrite a query using the LLM for better retrieval. */
-async function rewriteQuery(
-	question: string,
-	ollamaClient: OllamaClient
-): Promise<string> {
-	try {
-		const response = await ollamaClient.chat([
-			{
-				role: "user",
-				content: QUERY_REWRITE_PROMPT.replace("{question}", question),
-			},
-		]);
-		const rewritten = response.trim();
-		return rewritten || question;
-	} catch {
-		return question;
+/**
+ * Read a note's content from the vault, applying section extraction.
+ * Returns null if the file is not found.
+ */
+async function readNoteContent(
+	title: string,
+	app: App,
+	settings: PkmRagSettings
+): Promise<{ content: string; description: string; filePath: string } | null> {
+	const allFiles = app.vault.getMarkdownFiles();
+	const file = allFiles.find((f) => f.basename === title);
+	if (!file) return null;
+
+	const fullContent = await app.vault.read(file);
+	const cache = app.metadataCache.getFileCache(file);
+	const description = String(cache?.frontmatter?.[settings.descriptionFrontmatterKey] || "").slice(0, 500);
+
+	const parseSettings = resolveParseSettings(file.path, settings);
+	let content: string;
+
+	if (parseSettings.contentMode === "section") {
+		const section = extractSectionByHeading(
+			fullContent,
+			parseSettings.noteSectionHeaderName,
+			parseSettings.noteSectionHeaderLevel
+		);
+		content = section || fullContent;
+	} else {
+		const fmEnd = fullContent.indexOf("---", 3);
+		content = fmEnd !== -1 ? fullContent.substring(fmEnd + 3).trim() : fullContent;
 	}
+
+	return { content, description, filePath: file.path };
 }
 
-/** Ask mode: RAG Q&A with optional query rewriting. */
+/** Explore mode: RAG Q&A over notes. */
 export async function runExploreMode(
 	question: string,
-	vectorStore: VectorStore,
-	ollamaClient: OllamaClient,
+	qmdClient: QmdClient,
+	ollamaClient: OllamaChatClient,
+	app: App,
 	settings: PkmRagSettings,
 	onToken?: (token: string) => void,
-	filterTags?: string[]
+	collection?: string
 ): Promise<ModeResult> {
-	// Optional query rewriting
-	let searchQuery = question;
-	if (settings.enableQueryRewrite) {
-		searchQuery = await rewriteQuery(question, ollamaClient);
-	}
-
 	const { formattedContext, sources } = await retrieveContext(
-		searchQuery,
-		vectorStore,
-		ollamaClient,
+		question,
+		qmdClient,
+		app,
+		settings,
 		settings.topK,
 		settings.similarityThreshold,
-		filterTags
+		collection
 	);
 
 	if (!formattedContext) {
@@ -80,7 +93,6 @@ export async function runExploreMode(
 		};
 	}
 
-	// Use original question in the RAG prompt (not the rewritten one)
 	const prompt = formatExplorePrompt(formattedContext, question);
 	const messages = [
 		{ role: "system", content: EXPLORE_SYSTEM_PROMPT },
@@ -97,11 +109,12 @@ export async function runExploreMode(
 /** Connect mode: Analyze relationships between selected notes. */
 export async function runConnectMode(
 	selectedNotes: string[],
-	vectorStore: VectorStore,
-	ollamaClient: OllamaClient,
+	qmdClient: QmdClient,
+	ollamaClient: OllamaChatClient,
+	app: App,
 	settings: PkmRagSettings,
 	onToken?: (token: string) => void,
-	filterTags?: string[]
+	collection?: string
 ): Promise<ModeResult> {
 	const conceptContexts = new Map<string, string>();
 	const allSources: SourceInfo[] = [];
@@ -109,11 +122,12 @@ export async function runConnectMode(
 	for (const noteTitle of selectedNotes) {
 		const { formattedContext, sources } = await retrieveContext(
 			noteTitle,
-			vectorStore,
-			ollamaClient,
+			qmdClient,
+			app,
+			settings,
 			settings.topK,
 			settings.similarityThreshold,
-			filterTags
+			collection
 		);
 		conceptContexts.set(
 			noteTitle,
@@ -138,19 +152,21 @@ export async function runConnectMode(
 /** Gap Analysis mode: Identify coverage gaps for a topic. */
 export async function runGapMode(
 	topic: string,
-	vectorStore: VectorStore,
-	ollamaClient: OllamaClient,
+	qmdClient: QmdClient,
+	ollamaClient: OllamaChatClient,
+	app: App,
 	settings: PkmRagSettings,
 	onToken?: (token: string) => void,
-	filterTags?: string[]
+	collection?: string
 ): Promise<ModeResult> {
 	const { formattedContext, sources } = await retrieveContext(
 		topic,
-		vectorStore,
-		ollamaClient,
+		qmdClient,
+		app,
+		settings,
 		settings.gapAnalysisTopK,
 		settings.similarityThreshold,
-		filterTags
+		collection
 	);
 
 	if (!formattedContext) {
@@ -176,64 +192,65 @@ export async function runGapMode(
 /** Devil's Advocate mode: Challenge a note's reasoning using related notes. */
 export async function runDevilsAdvocateMode(
 	title: string,
-	vectorStore: VectorStore,
-	ollamaClient: OllamaClient,
+	qmdClient: QmdClient,
+	ollamaClient: OllamaChatClient,
+	app: App,
 	settings: PkmRagSettings,
 	onToken?: (token: string) => void,
-	filterTags?: string[]
+	collection?: string
 ): Promise<ModeResult> {
-	// Get target note's chunks
-	const targetChunks = vectorStore.getChunksByTitle(title);
-	if (targetChunks.length === 0) {
+	// Get target note content
+	const targetNote = await readNoteContent(title, app, settings);
+	if (!targetNote) {
 		return {
 			answer: `No note found with title "${title}".`,
 			sources: [],
 		};
 	}
 
-	const targetUuid = targetChunks[0].metadata.uuid;
-	const noteContext = targetChunks.map((c) => c.text).join("\n\n");
-
-	// Search for related notes using the first chunk's embedding
-	const tagSet = filterTags && filterTags.length > 0 ? new Set(filterTags) : undefined;
-	const results = vectorStore.search(
-		targetChunks[0].embedding,
-		settings.topK + 5,
-		new Set([targetUuid]),
-		tagSet
-	);
+	// Use the note's description as search query for better semantic matching
+	const searchQuery = targetNote.description || title;
+	const searchCollection = collection || settings.defaultCollection || undefined;
+	const results = await qmdClient.vectorSearch(searchQuery, {
+		limit: settings.topK + 5,
+		minScore: settings.similarityThreshold,
+		collection: searchCollection,
+	});
 
 	const relatedParts: string[] = [];
 	const sources: SourceInfo[] = [
 		{
 			title,
-			description: targetChunks[0].metadata.description || "",
-			filePath: targetChunks[0].metadata.filePath,
+			description: targetNote.description,
+			filePath: targetNote.filePath,
 		},
 	];
 	const seenTitles = new Set<string>([title]);
 
-	for (const { chunk, similarity } of results) {
-		if (similarity < settings.similarityThreshold) continue;
+	for (const result of results) {
+		const relTitle = result.title || "Unknown";
+		if (relTitle === title) continue;
 
-		const relTitle = chunk.metadata.title || "Unknown";
-		const description = chunk.metadata.description || "";
+		// Read and extract section content from the related note
+		const relNote = await readNoteContent(relTitle, app, settings);
+		const content = relNote?.content || result.snippet;
+		const description = relNote?.description || "";
 
 		const header = formatSourceHeader(relTitle, description);
-		relatedParts.push(`${header}\n${chunk.text}`);
+		relatedParts.push(`${header}\n${content}`);
 
 		if (!seenTitles.has(relTitle)) {
 			seenTitles.add(relTitle);
 			sources.push({
 				title: relTitle,
 				description,
-				filePath: chunk.metadata.filePath,
+				filePath: relNote?.filePath || result.file,
 			});
 		}
 	}
 
 	const relatedContext = relatedParts.join("\n\n---\n\n");
-	const prompt = formatDevilsAdvocatePrompt(title, noteContext, relatedContext);
+	const prompt = formatDevilsAdvocatePrompt(title, targetNote.content, relatedContext);
 	const messages = [
 		{ role: "system", content: DEVILS_ADVOCATE_SYSTEM_PROMPT },
 		{ role: "user", content: prompt },
@@ -250,68 +267,68 @@ export async function runDevilsAdvocateMode(
 export async function runRedundancyMode(
 	input: string,
 	inputType: "note" | "idea",
-	vectorStore: VectorStore,
-	ollamaClient: OllamaClient,
+	qmdClient: QmdClient,
+	ollamaClient: OllamaChatClient,
+	app: App,
 	settings: PkmRagSettings,
 	onToken?: (token: string) => void,
-	filterTags?: string[]
+	collection?: string
 ): Promise<ModeResult> {
-	let queryEmbedding: number[];
 	let targetContent: string;
-	let excludeUuid: string | undefined;
+	let searchQuery: string;
+	let excludeTitle: string | undefined;
 
 	if (inputType === "note") {
-		// Get existing note's embedding and content
-		const chunks = vectorStore.getChunksByTitle(input);
-		if (chunks.length === 0) {
+		const note = await readNoteContent(input, app, settings);
+		if (!note) {
 			return {
 				answer: `No note found with title "${input}".`,
 				sources: [],
 			};
 		}
-		queryEmbedding = chunks[0].embedding;
-		targetContent = chunks.map((c) => c.text).join("\n\n");
-		excludeUuid = chunks[0].metadata.uuid;
+		targetContent = note.content;
+		searchQuery = note.description || input;
+		excludeTitle = input;
 	} else {
-		// Embed the idea text
-		queryEmbedding = await ollamaClient.embed(input);
 		targetContent = input;
-		excludeUuid = undefined;
+		searchQuery = input;
+		excludeTitle = undefined;
 	}
 
-	// Search for similar notes with higher threshold for redundancy detection
-	const tagSet = filterTags && filterTags.length > 0 ? new Set(filterTags) : undefined;
-	const results = vectorStore.search(
-		queryEmbedding,
-		settings.similarTopK,
-		excludeUuid ? new Set([excludeUuid]) : undefined,
-		tagSet
-	);
+	const searchCollection = collection || settings.defaultCollection || undefined;
+	const results = await qmdClient.vectorSearch(searchQuery, {
+		limit: settings.similarTopK,
+		minScore: DEFAULTS.REDUNDANCY_THRESHOLD,
+		collection: searchCollection,
+	});
 
 	const similarParts: string[] = [];
 	const scores: string[] = [];
 	const sources: SourceInfo[] = [];
 	const seenTitles = new Set<string>();
 
-	for (const { chunk, similarity } of results) {
-		if (similarity < DEFAULTS.REDUNDANCY_THRESHOLD) continue;
+	for (const result of results) {
+		const resultTitle = result.title || "Unknown";
+		if (resultTitle === excludeTitle) continue;
+		if (seenTitles.has(resultTitle)) continue;
+		seenTitles.add(resultTitle);
 
-		const title = chunk.metadata.title || "Unknown";
-		if (seenTitles.has(title)) continue;
-		seenTitles.add(title);
+		const score = Math.round(result.score * 1000) / 1000;
+		scores.push(`${resultTitle}: ${score}`);
 
-		const score = Math.round(similarity * 1000) / 1000;
-		scores.push(`${title}: ${score}`);
+		const relNote = await readNoteContent(resultTitle, app, settings);
+		const content = relNote?.content || result.snippet;
+		const description = relNote?.description || "";
 
-		const header = formatSourceHeader(title, chunk.metadata.description, {
+		const header = formatSourceHeader(resultTitle, description, {
 			similarity: score,
 		});
-		similarParts.push(`${header}\n${chunk.text}`);
+		similarParts.push(`${header}\n${content}`);
 
 		sources.push({
-			title,
-			description: chunk.metadata.description || "",
-			filePath: chunk.metadata.filePath,
+			title: resultTitle,
+			description,
+			filePath: relNote?.filePath || result.file,
 		});
 	}
 
@@ -322,7 +339,6 @@ export async function runRedundancyMode(
 		};
 	}
 
-	// Build prompt and get LLM analysis
 	const similarContext = similarParts.join("\n\n---\n\n");
 	const scoresText = scores.join("\n");
 	const prompt = formatRedundancyPrompt(
@@ -347,82 +363,87 @@ export async function runRedundancyMode(
 /** Updater mode: Surface missing insights from notes that link to the target note. */
 export async function runUpdaterMode(
 	title: string,
-	vectorStore: VectorStore,
-	ollamaClient: OllamaClient,
+	qmdClient: QmdClient,
+	ollamaClient: OllamaChatClient,
+	app: App,
 	settings: PkmRagSettings,
 	onToken?: (token: string) => void,
-	filterTags?: string[]
+	_collection?: string
 ): Promise<ModeResult> {
-	// Get target note's chunks
-	const targetChunks = vectorStore.getChunksByTitle(title);
-	if (targetChunks.length === 0) {
+	// Get target note content
+	const targetNote = await readNoteContent(title, app, settings);
+	if (!targetNote) {
 		return {
 			answer: `No note found with title "${title}".`,
 			sources: [],
 		};
 	}
 
-	const noteContext = targetChunks.map((c) => c.text).join("\n\n");
-
-	// Extract aliases from target note metadata
-	const aliasStr = targetChunks[0].metadata.aliases || "";
-	const aliases = aliasStr
-		.split(",")
-		.map((a) => a.trim())
-		.filter(Boolean);
-
-	// Find chunks from other notes that link to this note
-	let backlinkChunks = vectorStore.getChunksLinkingTo(title, aliases);
-
-	// Apply tag filtering if specified
-	if (filterTags && filterTags.length > 0) {
-		const tagSet = new Set(filterTags);
-		backlinkChunks = backlinkChunks.filter((chunk) => {
-			const chunkTags = (chunk.metadata.tags || "")
-				.split(",")
-				.map((t) => t.trim())
-				.filter(Boolean);
-			return chunkTags.some((t) => tagSet.has(t));
-		});
+	// Find backlinks using Obsidian's metadata cache
+	const targetFile = app.vault.getAbstractFileByPath(targetNote.filePath);
+	if (!(targetFile instanceof TFile)) {
+		return {
+			answer: `Cannot find file for "${title}".`,
+			sources: [],
+		};
 	}
 
-	if (backlinkChunks.length === 0) {
+	// Get all files that link TO the target note
+	const backlinkFiles: TFile[] = [];
+	for (const [sourcePath, links] of Object.entries(app.metadataCache.resolvedLinks)) {
+		if (targetNote.filePath in links) {
+			const sourceFile = app.vault.getAbstractFileByPath(sourcePath);
+			if (sourceFile instanceof TFile) {
+				backlinkFiles.push(sourceFile);
+			}
+		}
+	}
+
+	if (backlinkFiles.length === 0) {
 		return {
 			answer: `No other notes link to "${title}". There are no backlink insights to review.`,
 			sources: [],
 		};
 	}
 
-	// Format backlink context with source headers
+	// Read content from backlink notes with section extraction
 	const backlinkParts: string[] = [];
 	const sources: SourceInfo[] = [
 		{
 			title,
-			description: targetChunks[0].metadata.description || "",
-			filePath: targetChunks[0].metadata.filePath,
+			description: targetNote.description,
+			filePath: targetNote.filePath,
 		},
 	];
 	const seenTitles = new Set<string>([title]);
 
-	for (const chunk of backlinkChunks) {
-		const srcTitle = chunk.metadata.title || "Unknown";
-		const description = chunk.metadata.description || "";
+	for (const blFile of backlinkFiles) {
+		const srcTitle = blFile.basename;
+		const blNote = await readNoteContent(srcTitle, app, settings);
+		if (!blNote) continue;
 
-		const header = formatSourceHeader(srcTitle, description);
-		backlinkParts.push(`${header}\n${chunk.text}`);
+		const header = formatSourceHeader(srcTitle, blNote.description);
+		backlinkParts.push(`${header}\n${blNote.content}`);
 
 		if (!seenTitles.has(srcTitle)) {
 			seenTitles.add(srcTitle);
 			sources.push({
 				title: srcTitle,
-				description,
-				filePath: chunk.metadata.filePath,
+				description: blNote.description,
+				filePath: blNote.filePath,
 			});
 		}
 	}
 
+	if (backlinkParts.length === 0) {
+		return {
+			answer: `No backlink content could be extracted for "${title}".`,
+			sources: [],
+		};
+	}
+
 	const backlinkContext = backlinkParts.join("\n\n---\n\n");
-	const prompt = formatUpdaterPrompt(title, noteContext, backlinkContext);
+	const prompt = formatUpdaterPrompt(title, targetNote.content, backlinkContext);
 	const messages = [
 		{ role: "system", content: UPDATER_SYSTEM_PROMPT },
 		{ role: "user", content: prompt },

@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
 import type PkmRagPlugin from "../main";
 import { ChatMessage, ChatMode, SourceInfo } from "../types";
-import { createSourcesEl, renderMarkdown, createNoteSelector, createTagFilter } from "./components";
+import { createSourcesEl, renderMarkdown, createNoteSelector, createCollectionFilter } from "./components";
 import {
 	runExploreMode,
 	runConnectMode,
@@ -28,7 +28,7 @@ export class ChatView extends ItemView {
 
 	// Mode-specific state
 	private selectedNotes: string[] = [];
-	private selectedTags: string[] = [];
+	private selectedCollection = "";
 	private redundancyInputType: "note" | "idea" = "note";
 	private cleanupFns: (() => void)[] = [];
 	private modeConfigCleanupFns: (() => void)[] = [];
@@ -36,6 +36,7 @@ export class ChatView extends ItemView {
 	constructor(leaf: WorkspaceLeaf, plugin: PkmRagPlugin) {
 		super(leaf);
 		this.plugin = plugin;
+		this.selectedCollection = plugin.settings.defaultCollection;
 	}
 
 	getViewType(): string {
@@ -67,7 +68,7 @@ export class ChatView extends ItemView {
 			{ value: "gap", label: "Gap Analysis" },
 			{ value: "devils_advocate", label: "Devil's Advocate" },
 			{ value: "redundancy", label: "Redundancy Check" },
-		{ value: "updater", label: "Updater" },
+			{ value: "updater", label: "Updater" },
 		];
 		for (const mode of modes) {
 			modeSelect.createEl("option", {
@@ -94,17 +95,11 @@ export class ChatView extends ItemView {
 			this.renderMessages();
 		});
 
-		// Tag filter (persists across mode switches)
-		const tagFilterEl = container.createDiv({
-			cls: "pkm-rag-chat-tag-filter",
+		// Collection filter (persists across mode switches)
+		const collectionFilterEl = container.createDiv({
+			cls: "pkm-rag-chat-collection-filter",
 		});
-		const allTags = this.plugin.vectorStore.getAllTags();
-		if (allTags.length > 0) {
-			const { cleanup } = createTagFilter(tagFilterEl, allTags, (tags) => {
-				this.selectedTags = tags;
-			});
-			this.cleanupFns.push(cleanup);
-		}
+		this.initCollectionFilter(collectionFilterEl);
 
 		// Mode-specific config area
 		this.modeConfigEl = container.createDiv({
@@ -125,6 +120,21 @@ export class ChatView extends ItemView {
 		this.renderInputArea();
 	}
 
+	private async initCollectionFilter(container: HTMLElement): Promise<void> {
+		const collections = await this.plugin.qmdClient.getCollections();
+		if (collections.length > 0) {
+			const { cleanup } = createCollectionFilter(
+				container,
+				collections,
+				this.selectedCollection,
+				(collection) => {
+					this.selectedCollection = collection;
+				}
+			);
+			this.cleanupFns.push(cleanup);
+		}
+	}
+
 	async onClose(): Promise<void> {
 		for (const fn of this.cleanupFns) fn();
 		this.cleanupFns = [];
@@ -143,7 +153,7 @@ export class ChatView extends ItemView {
 		this.modeConfigCleanupFns = [];
 		this.modeConfigEl.empty();
 
-		const titles = this.plugin.vectorStore.getAllTitles();
+		const titles = this.app.vault.getMarkdownFiles().map((f) => f.basename);
 
 		switch (this.currentMode) {
 			case "explore": {
@@ -428,47 +438,51 @@ export class ChatView extends ItemView {
 
 			let result: { answer: string; sources: SourceInfo[] };
 
-			const tags = this.selectedTags.length > 0 ? this.selectedTags : undefined;
+			const collection = this.selectedCollection || undefined;
 
 			switch (this.currentMode) {
 				case "explore":
 					result = await runExploreMode(
 						userContent,
-						this.plugin.vectorStore,
+						this.plugin.qmdClient,
 						this.plugin.ollamaClient,
+						this.app,
 						this.plugin.settings,
 						onToken,
-						tags
+						collection
 					);
 					break;
 				case "connect":
 					result = await runConnectMode(
 						this.selectedNotes,
-						this.plugin.vectorStore,
+						this.plugin.qmdClient,
 						this.plugin.ollamaClient,
+						this.app,
 						this.plugin.settings,
 						onToken,
-						tags
+						collection
 					);
 					break;
 				case "gap":
 					result = await runGapMode(
 						userContent,
-						this.plugin.vectorStore,
+						this.plugin.qmdClient,
 						this.plugin.ollamaClient,
+						this.app,
 						this.plugin.settings,
 						onToken,
-						tags
+						collection
 					);
 					break;
 				case "devils_advocate":
 					result = await runDevilsAdvocateMode(
 						this.selectedNotes[0],
-						this.plugin.vectorStore,
+						this.plugin.qmdClient,
 						this.plugin.ollamaClient,
+						this.app,
 						this.plugin.settings,
 						onToken,
-						tags
+						collection
 					);
 					break;
 				case "redundancy":
@@ -477,21 +491,23 @@ export class ChatView extends ItemView {
 							? this.selectedNotes[0]
 							: userContent.replace("Check idea: ", ""),
 						this.redundancyInputType,
-						this.plugin.vectorStore,
+						this.plugin.qmdClient,
 						this.plugin.ollamaClient,
+						this.app,
 						this.plugin.settings,
 						onToken,
-						tags
+						collection
 					);
 					break;
 				case "updater":
 					result = await runUpdaterMode(
 						this.selectedNotes[0],
-						this.plugin.vectorStore,
+						this.plugin.qmdClient,
 						this.plugin.ollamaClient,
+						this.app,
 						this.plugin.settings,
 						onToken,
-						tags
+						collection
 					);
 					break;
 			}
@@ -529,7 +545,6 @@ export class ChatView extends ItemView {
 			const contentEl = msgEl.createDiv({ cls: "pkm-rag-msg-content" });
 
 			if (msg.content) {
-				// For completed messages, render as markdown
 				if (
 					msg.role === "assistant" &&
 					!this.isProcessing
