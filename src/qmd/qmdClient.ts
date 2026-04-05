@@ -39,7 +39,8 @@ export class QmdClient {
 		try {
 			await this.execQmd(["status"]);
 			return true;
-		} catch {
+		} catch (error) {
+			console.error("QMD availability check failed:", error);
 			return false;
 		}
 	}
@@ -127,9 +128,12 @@ export class QmdClient {
 	private execQmd(args: string[]): Promise<string> {
 		return new Promise((resolve, reject) => {
 			const cmd = `${this.qmdPath} ${args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`;
-			exec(cmd, { timeout: 30000 }, (error, stdout, stderr) => {
+			console.log("Executing QMD command:", cmd);
+			exec(cmd, { timeout: 30000 }, (error: any, stdout: string, stderr: string) => {
 				if (error) {
-					reject(new Error(`QMD command failed: ${stderr || error.message}`));
+					const errorMsg = `QMD command failed: ${stderr || error.message}`;
+					console.error(errorMsg, { error, stderr, stdout });
+					reject(new Error(errorMsg));
 					return;
 				}
 				resolve(stdout);
