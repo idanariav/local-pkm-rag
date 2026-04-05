@@ -129,7 +129,12 @@ export class QmdClient {
 		return new Promise((resolve, reject) => {
 			const cmd = `${this.qmdPath} ${args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`;
 			console.log("Executing QMD command:", cmd);
-			exec(cmd, { timeout: 30000 }, (error: any, stdout: string, stderr: string) => {
+			// Ensure homebrew paths are available in PATH
+			const env = {
+				...process.env,
+				PATH: `/opt/homebrew/bin:/opt/homebrew/sbin:${process.env.PATH}`,
+			};
+			exec(cmd, { timeout: 30000, env }, (error: any, stdout: string, stderr: string) => {
 				if (error) {
 					const errorMsg = `QMD command failed: ${stderr || error.message}`;
 					console.error(errorMsg, { error, stderr, stdout });
