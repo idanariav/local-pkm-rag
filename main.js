@@ -150,7 +150,7 @@ var DEFAULTS = {
   PROPERTY_WIKILINK_PATTERN: /\([A-Za-z]+::\s*\[\[(?:[^\]|]*\|)?([^\]]+)\]\]\)/g,
   WIKILINK_PATTERN: /\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/g,
   DATAVIEW_FIELD_PATTERN: /^\s*\w+::\s*/gm,
-  QMD_PATH: "qmd",
+  QMD_PATH: "/opt/homebrew/bin/qmd",
   QMD_DEFAULT_COLLECTION: ""
 };
 
