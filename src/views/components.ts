@@ -75,9 +75,8 @@ function createChipSelector(
 	});
 
 	const dropdown = container.createDiv({
-		cls: "pkm-rag-note-dropdown",
+		cls: "pkm-rag-note-dropdown pkm-rag-hidden",
 	});
-	dropdown.style.display = "none";
 
 	const renderChips = () => {
 		chipsContainer.empty();
@@ -106,10 +105,10 @@ function createChipSelector(
 				t.toLowerCase().includes(filter.toLowerCase())
 		);
 		if (filtered.length === 0) {
-			dropdown.style.display = "none";
+			dropdown.addClass("pkm-rag-hidden");
 			return;
 		}
-		dropdown.style.display = "block";
+		dropdown.removeClass("pkm-rag-hidden");
 		for (const item of filtered.slice(0, MAX_DROPDOWN_ITEMS)) {
 			const el = dropdown.createDiv({
 				text: item,
@@ -118,7 +117,7 @@ function createChipSelector(
 			el.addEventListener("click", () => {
 				selected.add(item);
 				searchInput.value = "";
-				dropdown.style.display = "none";
+				dropdown.addClass("pkm-rag-hidden");
 				renderChips();
 				onChange(Array.from(selected));
 			});
@@ -134,7 +133,7 @@ function createChipSelector(
 
 	const onClickOutside = (e: MouseEvent) => {
 		if (!container.contains(e.target as Node)) {
-			dropdown.style.display = "none";
+			dropdown.addClass("pkm-rag-hidden");
 		}
 	};
 	document.addEventListener("click", onClickOutside);
@@ -199,9 +198,8 @@ export function createNoteSelector(
 	});
 
 	const dropdown = wrapper.createDiv({
-		cls: "pkm-rag-note-dropdown",
+		cls: "pkm-rag-note-dropdown pkm-rag-hidden",
 	});
-	dropdown.style.display = "none";
 
 	const renderDropdown = (filter: string) => {
 		dropdown.empty();
@@ -209,10 +207,10 @@ export function createNoteSelector(
 			t.toLowerCase().includes(filter.toLowerCase())
 		);
 		if (filtered.length === 0) {
-			dropdown.style.display = "none";
+			dropdown.addClass("pkm-rag-hidden");
 			return;
 		}
-		dropdown.style.display = "block";
+		dropdown.removeClass("pkm-rag-hidden");
 		for (const title of filtered.slice(0, MAX_DROPDOWN_ITEMS)) {
 			const item = dropdown.createDiv({
 				text: title,
@@ -222,7 +220,7 @@ export function createNoteSelector(
 				selected.clear();
 				selected.add(title);
 				searchInput.value = title;
-				dropdown.style.display = "none";
+				dropdown.addClass("pkm-rag-hidden");
 				onChange([title]);
 			});
 		}
@@ -237,7 +235,7 @@ export function createNoteSelector(
 
 	const onClickOutside = (e: MouseEvent) => {
 		if (!wrapper.contains(e.target as Node)) {
-			dropdown.style.display = "none";
+			dropdown.addClass("pkm-rag-hidden");
 		}
 	};
 	document.addEventListener("click", onClickOutside);

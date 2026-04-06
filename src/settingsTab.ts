@@ -282,11 +282,7 @@ export class PkmRagSettingTab extends PluginSettingTab {
 
 		for (let i = 0; i < configs.length; i++) {
 			const config = configs[i];
-			const groupEl = containerEl.createDiv("pkm-folder-config-group");
-			groupEl.style.border = "1px solid var(--background-modifier-border)";
-			groupEl.style.borderRadius = "8px";
-			groupEl.style.padding = "8px 12px";
-			groupEl.style.marginBottom = "8px";
+			const groupEl = containerEl.createDiv("pkm-folder-config-group pkm-rag-folder-group");
 
 			new Setting(groupEl)
 				.setName(`Folder ${i + 1}`)

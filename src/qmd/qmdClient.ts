@@ -39,8 +39,7 @@ export class QmdClient {
 		try {
 			await this.execQmd(["status"]);
 			return true;
-		} catch (error) {
-			console.error("QMD availability check failed:", error);
+		} catch {
 			return false;
 		}
 	}
@@ -128,7 +127,6 @@ export class QmdClient {
 	private execQmd(args: string[]): Promise<string> {
 		return new Promise((resolve, reject) => {
 			const cmd = `${this.qmdPath} ${args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`;
-			console.log("Executing QMD command:", cmd);
 			// Ensure homebrew paths are available in PATH
 			const env = {
 				...process.env,
