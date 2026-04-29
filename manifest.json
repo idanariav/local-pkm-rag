@@ -1,7 +1,7 @@
 {
 	"id": "pkm-rag",
 	"name": "PKM RAG",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "1.0.0",
 	"description": "Local RAG-powered knowledge assistant: find related notes, ask questions, explore connections, and challenge ideas using your own vault.",
 	"author": "Idan Ariav",
