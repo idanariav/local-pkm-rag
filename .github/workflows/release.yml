@@ -1,0 +1,35 @@
+name: Plugin release
+
+on:
+  push:
+    tags:
+      - "*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Build plugin
+        run: |
+          npm install
+          npm run build
+
+      - name: Create zip archive
+        run: |
+          zip -j pkm-rag.zip main.js manifest.json styles.css
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1.7.3
+        with:
+          artifacts: "main.js,manifest.json,styles.css,pkm-rag.zip"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          generateReleaseNotes: true
+          makeLatest: true
