@@ -318,3 +318,208 @@
 	background-color: var(--background-secondary);
 	border-radius: 4px;
 }
+
+/* ===== Settings: Tools section ===== */
+
+.pkm-rag-tool-setting {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 8px 12px;
+	margin-bottom: 8px;
+}
+
+.pkm-rag-tool-status {
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	margin-bottom: 4px;
+}
+
+/* ===== Setup Wizard ===== */
+
+.pkm-rag-wizard {
+	max-width: 640px;
+}
+
+.pkm-rag-wizard-prereq {
+	margin-bottom: 12px;
+	padding: 8px 12px;
+	border-radius: 4px;
+	background-color: var(--background-secondary);
+}
+
+.pkm-rag-wizard-prereq.pkm-rag-wizard-warning {
+	background-color: var(--background-modifier-error);
+	border: 1px solid var(--text-error);
+}
+
+.pkm-rag-wizard-ok {
+	color: var(--text-success);
+}
+
+.pkm-rag-wizard-cards {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+	gap: 8px;
+	margin-bottom: 12px;
+}
+
+.pkm-rag-wizard-card {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 8px 12px;
+}
+
+.pkm-rag-wizard-card h3 {
+	margin: 0 0 2px 0;
+}
+
+.pkm-rag-wizard-status {
+	font-size: var(--font-ui-small);
+	margin: 4px 0 8px 0;
+}
+
+.pkm-rag-wizard-status-healthy {
+	color: var(--text-success);
+}
+
+.pkm-rag-wizard-status-unhealthy {
+	color: var(--text-warning);
+}
+
+.pkm-rag-wizard-status-not-found {
+	color: var(--text-muted);
+}
+
+.pkm-rag-wizard-status-installing {
+	color: var(--text-accent);
+}
+
+.pkm-rag-wizard-card-actions {
+	display: flex;
+	gap: 8px;
+}
+
+.pkm-rag-wizard-log {
+	margin-top: 8px;
+	max-height: 140px;
+	overflow-y: auto;
+	background-color: var(--background-secondary);
+	border-radius: 4px;
+	padding: 6px 8px;
+	font-size: var(--font-ui-smaller);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.pkm-rag-wizard-footer {
+	display: flex;
+	justify-content: flex-end;
+	margin-top: 8px;
+}
+
+/* ===== CLI Console ===== */
+
+.pkm-rag-console {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	overflow: hidden;
+	padding: 8px;
+}
+
+.pkm-rag-console-header {
+	margin-bottom: 8px;
+}
+
+.pkm-rag-console-tool-select {
+	width: 100%;
+}
+
+.pkm-rag-console-body {
+	display: flex;
+	gap: 12px;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.pkm-rag-console-picker {
+	width: 40%;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.pkm-rag-console-category-tabs {
+	display: flex;
+	gap: 2px;
+	margin-bottom: 6px;
+}
+
+.pkm-rag-console-category-tab {
+	flex: 1;
+	padding: 4px 8px;
+	font-size: var(--font-ui-small);
+	background-color: var(--background-secondary);
+	color: var(--text-muted);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.pkm-rag-console-category-tab.is-active {
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border-color: var(--interactive-accent);
+	font-weight: 600;
+}
+
+.pkm-rag-console-command-list {
+	flex: 1;
+	overflow-y: auto;
+	margin-top: 4px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+}
+
+.pkm-rag-console-command-selected {
+	background-color: var(--background-secondary);
+	font-weight: 600;
+}
+
+.pkm-rag-console-form {
+	flex: 1;
+	overflow-y: auto;
+}
+
+.pkm-rag-console-chip-field {
+	margin-bottom: 12px;
+}
+
+.pkm-rag-console-chip-field input[type="text"] {
+	width: 100%;
+}
+
+.pkm-rag-console-actions {
+	display: flex;
+	gap: 8px;
+	padding: 8px 0;
+}
+
+.pkm-rag-console-output {
+	max-height: 240px;
+	overflow-y: auto;
+	background-color: var(--background-secondary);
+	border-radius: 4px;
+	padding: 8px;
+	font-size: var(--font-ui-smaller);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.pkm-rag-console-confirm-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 12px;
+}

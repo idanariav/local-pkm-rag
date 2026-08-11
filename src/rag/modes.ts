@@ -1,5 +1,5 @@
 import { App, TFile } from "obsidian";
-import { QmdClient } from "../qmd/qmdClient";
+import { QmdClient } from "../cli/tools/qmdClient";
 import { OllamaChatClient } from "../ollama/chatClient";
 import { PkmRagSettings, resolveParseSettings } from "../settings";
 import { SourceInfo } from "../types";

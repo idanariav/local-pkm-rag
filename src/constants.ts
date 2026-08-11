@@ -17,6 +17,8 @@ export const DEFAULTS = {
 	WIKILINK_PATTERN: /\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/g,
 	DATAVIEW_FIELD_PATTERN: /^\s*\w+::\s*/gm,
 
-	QMD_PATH: "/opt/homebrew/bin/qmd",
 	QMD_DEFAULT_COLLECTION: "",
+
+	DEFAULT_COMMAND_TIMEOUT_MS: 30000,
+	DEFAULT_STREAMING_SAFETY_TIMEOUT_MS: 30 * 60 * 1000,
 } as const;

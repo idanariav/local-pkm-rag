@@ -1,5 +1,5 @@
 import { App, TFile } from "obsidian";
-import { QmdClient } from "../qmd/qmdClient";
+import { QmdClient } from "../cli/tools/qmdClient";
 import { RetrievalResult, SimilarNote, SourceInfo } from "../types";
 import { PkmRagSettings, resolveParseSettings } from "../settings";
 import { extractSectionByHeading } from "../markdownParser";

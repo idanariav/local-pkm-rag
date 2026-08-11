@@ -1,4 +1,6 @@
 import { DEFAULTS } from "./constants";
+import { ToolId } from "./cli/types";
+import { TOOL_IDS } from "./cli/toolRegistry";
 
 export interface FolderConfig {
 	folder: string;
@@ -32,7 +34,10 @@ export interface PkmRagSettings {
 	filterLinkedByDefault: boolean;
 	enableStreaming: boolean;
 
-	qmdPath: string;
+	toolPaths: Record<ToolId, string>;
+	commandTimeoutMs: number;
+	setupWizardShown: boolean;
+
 	defaultCollection: string;
 }
 
@@ -55,9 +60,24 @@ export const DEFAULT_SETTINGS: PkmRagSettings = {
 	filterLinkedByDefault: false,
 	enableStreaming: true,
 
-	qmdPath: DEFAULTS.QMD_PATH,
+	toolPaths: Object.fromEntries(TOOL_IDS.map((id) => [id, ""])) as Record<ToolId, string>,
+	commandTimeoutMs: DEFAULTS.DEFAULT_COMMAND_TIMEOUT_MS,
+	setupWizardShown: false,
+
 	defaultCollection: DEFAULTS.QMD_DEFAULT_COLLECTION,
 };
+
+/**
+ * One-time migration from the pre-multi-tool settings shape: the old single `qmdPath`
+ * field becomes `toolPaths.qmd`. Safe to call on already-migrated settings (no-op).
+ */
+export function migrateLegacySettings(settings: PkmRagSettings & { qmdPath?: string }): PkmRagSettings {
+	if (settings.qmdPath && !settings.toolPaths?.qmd) {
+		settings.toolPaths = { ...settings.toolPaths, qmd: settings.qmdPath };
+	}
+	delete settings.qmdPath;
+	return settings;
+}
 
 /** Find the most specific matching FolderConfig for a file path (longest-prefix match). */
 export function findFolderConfig(

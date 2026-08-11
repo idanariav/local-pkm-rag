@@ -132,7 +132,7 @@ __export(main_exports, {
   default: () => PkmRagPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian8 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 
 // src/constants.ts
 var DEFAULTS = {
@@ -150,8 +150,885 @@ var DEFAULTS = {
   PROPERTY_WIKILINK_PATTERN: /\([A-Za-z]+::\s*\[\[(?:[^\]|]*\|)?([^\]]+)\]\]\)/g,
   WIKILINK_PATTERN: /\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/g,
   DATAVIEW_FIELD_PATTERN: /^\s*\w+::\s*/gm,
-  QMD_PATH: "/opt/homebrew/bin/qmd",
-  QMD_DEFAULT_COLLECTION: ""
+  QMD_DEFAULT_COLLECTION: "",
+  DEFAULT_COMMAND_TIMEOUT_MS: 3e4,
+  DEFAULT_STREAMING_SAFETY_TIMEOUT_MS: 30 * 60 * 1e3
+};
+
+// src/cli/schemas/qmd.ts
+function sharedSearchFlags() {
+  return [
+    { flag: "-n", type: "number", label: "Result limit" },
+    {
+      flag: "-c",
+      type: "string",
+      label: "Collection",
+      description: "Restrict to a collection (repeatable)",
+      repeatable: true
+    },
+    { flag: "--all", type: "boolean", label: "Search all collections" },
+    { flag: "--min-score", type: "number", label: "Minimum score" },
+    { flag: "--full", type: "boolean", label: "Full document content" },
+    { flag: "--explain", type: "boolean", label: "Explain ranking" },
+    { flag: "--no-rerank", type: "boolean", label: "Disable reranking" },
+    { flag: "-C", type: "number", label: "Candidate limit", description: "--candidate-limit" },
+    { flag: "--intent", type: "string", label: "Intent hint" },
+    { flag: "--line-numbers", type: "boolean", label: "Show line numbers" },
+    { flag: "--csv", type: "boolean", label: "CSV output" },
+    { flag: "--md", type: "boolean", label: "Markdown output" },
+    { flag: "--xml", type: "boolean", label: "XML output" },
+    { flag: "--files", type: "boolean", label: "File list output" }
+  ];
+}
+var commands = [
+  {
+    id: "collection.add",
+    argvPath: ["collection", "add"],
+    category: "infra",
+    label: "Collection \u2192 Add",
+    positionals: [{ name: "path", type: "path", label: "Path", required: true }],
+    flags: [
+      { flag: "--name", type: "string", label: "Collection name", required: true },
+      { flag: "--mask", type: "string", label: "Glob pattern", default: "**/*.md" },
+      { flag: "--heading-name", type: "string", label: "Heading name (scope to subsection)" },
+      { flag: "--heading-level", type: "number", label: "Heading level" }
+    ],
+    executionMode: "buffered"
+  },
+  {
+    id: "collection.list",
+    argvPath: ["collection", "list"],
+    category: "infra",
+    label: "Collection \u2192 List",
+    positionals: [],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "collection.show",
+    argvPath: ["collection", "show"],
+    category: "infra",
+    label: "Collection \u2192 Show",
+    positionals: [{ name: "name", type: "string", label: "Collection name", required: true }],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "collection.remove",
+    argvPath: ["collection", "remove"],
+    category: "infra",
+    label: "Collection \u2192 Remove",
+    positionals: [{ name: "name", type: "string", label: "Collection name", required: true }],
+    flags: [],
+    executionMode: "buffered",
+    destructive: true
+  },
+  {
+    id: "collection.rename",
+    argvPath: ["collection", "rename"],
+    category: "infra",
+    label: "Collection \u2192 Rename",
+    positionals: [
+      { name: "oldName", type: "string", label: "Current name", required: true },
+      { name: "newName", type: "string", label: "New name", required: true }
+    ],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "collection.update-cmd",
+    argvPath: ["collection", "update-cmd"],
+    category: "infra",
+    label: "Collection \u2192 Set update command",
+    description: "Pre-index shell command (e.g. git pull). Omit to clear.",
+    positionals: [
+      { name: "name", type: "string", label: "Collection name", required: true },
+      { name: "cmd", type: "string", label: "Update command", required: false }
+    ],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "collection.include",
+    argvPath: ["collection", "include"],
+    category: "infra",
+    label: "Collection \u2192 Include in default search",
+    positionals: [{ name: "name", type: "string", label: "Collection name", required: true }],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "collection.exclude",
+    argvPath: ["collection", "exclude"],
+    category: "infra",
+    label: "Collection \u2192 Exclude from default search",
+    positionals: [{ name: "name", type: "string", label: "Collection name", required: true }],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "ls",
+    argvPath: ["ls"],
+    category: "infra",
+    label: "List files in a collection",
+    positionals: [
+      { name: "target", type: "string", label: "Collection[/subpath]", required: true }
+    ],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "context.add",
+    argvPath: ["context", "add"],
+    category: "infra",
+    label: "Context \u2192 Add",
+    description: "Attach descriptive context to a collection/subfolder/global path.",
+    positionals: [
+      { name: "path", type: "string", label: "Path (qmd:// or /)", required: false },
+      { name: "text", type: "string", label: "Context text", required: true }
+    ],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "context.list",
+    argvPath: ["context", "list"],
+    category: "infra",
+    label: "Context \u2192 List",
+    positionals: [],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "context.rm",
+    argvPath: ["context", "rm"],
+    category: "infra",
+    label: "Context \u2192 Remove",
+    positionals: [{ name: "path", type: "string", label: "Path", required: true }],
+    flags: [],
+    executionMode: "buffered",
+    destructive: true
+  },
+  {
+    id: "index",
+    argvPath: ["index"],
+    category: "infra",
+    label: "Index (rescan collections)",
+    positionals: [],
+    flags: [{ flag: "--pull", type: "boolean", label: "Run each collection's update-cmd first" }],
+    executionMode: "streaming"
+  },
+  {
+    id: "embed",
+    argvPath: ["embed"],
+    category: "infra",
+    label: "Generate embeddings",
+    positionals: [],
+    flags: [
+      { flag: "-f", type: "boolean", label: "Force re-embed" },
+      {
+        flag: "--chunk-strategy",
+        type: "enum",
+        label: "Chunk strategy",
+        enumValues: ["auto"]
+      },
+      { flag: "--max-docs-per-batch", type: "number", label: "Max docs per batch" },
+      { flag: "--max-batch-mb", type: "number", label: "Max batch size (MB)" }
+    ],
+    executionMode: "streaming"
+  },
+  {
+    id: "pull",
+    argvPath: ["pull"],
+    category: "infra",
+    label: "Pull models",
+    description: "Pre-download/verify the embedding, reranker, and query-expansion models.",
+    positionals: [],
+    flags: [{ flag: "--refresh", type: "boolean", label: "Force re-download" }],
+    executionMode: "streaming"
+  },
+  {
+    id: "status",
+    argvPath: ["status"],
+    category: "infra",
+    label: "Status",
+    positionals: [],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "cleanup",
+    argvPath: ["cleanup"],
+    category: "infra",
+    label: "Cleanup",
+    description: "Clear LLM cache, remove orphaned vectors/inactive docs, vacuum DB.",
+    positionals: [],
+    flags: [],
+    executionMode: "streaming",
+    destructive: true
+  },
+  {
+    id: "tsearch",
+    argvPath: ["tsearch"],
+    category: "search",
+    label: "Keyword search (tsearch)",
+    positionals: [{ name: "query", type: "string", label: "Query", required: true }],
+    flags: sharedSearchFlags(),
+    executionMode: "buffered",
+    jsonFlag: "--json"
+  },
+  {
+    id: "vsearch",
+    argvPath: ["vsearch"],
+    category: "search",
+    label: "Vector search (vsearch)",
+    positionals: [{ name: "query", type: "string", label: "Query", required: true }],
+    flags: sharedSearchFlags().map((f) => f.flag === "--min-score" ? { ...f, default: 0.3 } : f),
+    executionMode: "buffered",
+    jsonFlag: "--json"
+  },
+  {
+    id: "hsearch",
+    argvPath: ["hsearch"],
+    category: "search",
+    label: "Hybrid search (hsearch)",
+    description: "Query expansion \u2192 BM25+vector \u2192 RRF fusion \u2192 LLM rerank.",
+    positionals: [{ name: "query", type: "string", label: "Query", required: true }],
+    flags: sharedSearchFlags(),
+    executionMode: "buffered",
+    jsonFlag: "--json"
+  },
+  {
+    id: "fsearch",
+    argvPath: ["fsearch"],
+    category: "search",
+    label: "Filter search (fsearch)",
+    description: "Structured metadata/frontmatter filter DSL (no LLM).",
+    positionals: [{ name: "filter", type: "string", label: "Filter DSL", required: true }],
+    flags: sharedSearchFlags(),
+    executionMode: "buffered",
+    jsonFlag: "--json"
+  },
+  {
+    id: "get",
+    argvPath: ["get"],
+    category: "search",
+    label: "Get document",
+    positionals: [{ name: "target", type: "string", label: "Path or #docid", required: true }],
+    flags: [
+      { flag: "--section", type: "string", label: "Section heading (e.g. Heading/Sub)" },
+      { flag: "--no-callouts", type: "boolean", label: "Strip callouts" },
+      { flag: "--no-codeblocks", type: "boolean", label: "Strip code blocks" },
+      { flag: "--from", type: "number", label: "Start line" },
+      { flag: "-l", type: "number", label: "Line count" },
+      { flag: "--line-numbers", type: "boolean", label: "Show line numbers" }
+    ],
+    executionMode: "buffered"
+  },
+  {
+    id: "multi-get",
+    argvPath: ["multi-get"],
+    category: "search",
+    label: "Get multiple documents",
+    positionals: [{ name: "pattern", type: "string", label: "Glob or comma list", required: true }],
+    flags: [
+      { flag: "--max-bytes", type: "number", label: "Max bytes per doc" },
+      { flag: "-l", type: "number", label: "Line count" }
+    ],
+    executionMode: "buffered",
+    jsonFlag: "--json"
+  },
+  {
+    id: "bench",
+    argvPath: ["bench"],
+    category: "infra",
+    label: "Run benchmark",
+    positionals: [{ name: "fixture", type: "path", label: "Fixture JSON path", required: true }],
+    flags: [{ flag: "-c", type: "string", label: "Collection", repeatable: true }],
+    executionMode: "streaming",
+    jsonFlag: "--json"
+  },
+  {
+    id: "skill.show",
+    argvPath: ["skill", "show"],
+    category: "infra",
+    label: "Skill \u2192 Show",
+    positionals: [],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "skill.install",
+    argvPath: ["skill", "install"],
+    category: "infra",
+    label: "Skill \u2192 Install",
+    positionals: [],
+    flags: [
+      { flag: "--global", type: "boolean", label: "Install globally" },
+      { flag: "--yes", type: "boolean", label: "Skip confirmation" },
+      { flag: "-f", type: "boolean", label: "Force overwrite" }
+    ],
+    executionMode: "buffered"
+  }
+];
+var qmdSchema = { id: "qmd", commands };
+
+// src/cli/schemas/qimg.ts
+function sharedSearchFlags2() {
+  return [
+    { flag: "--image", type: "path", label: "Search by image", description: "Use instead of the text query" },
+    { flag: "--collection", type: "string", label: "Collection" },
+    { flag: "--after", type: "date", label: "After date (YYYY-MM-DD)" },
+    { flag: "--before", type: "date", label: "Before date (YYYY-MM-DD)" },
+    { flag: "-n", type: "number", label: "Result limit" }
+  ];
+}
+var commands2 = [
+  {
+    id: "collection.add",
+    argvPath: ["collection", "add"],
+    category: "infra",
+    label: "Collection \u2192 Add",
+    positionals: [{ name: "path", type: "path", label: "Path", required: true }],
+    flags: [
+      { flag: "--name", type: "string", label: "Collection name", required: true },
+      { flag: "--mask", type: "string", label: "Glob pattern", default: "**/*.{png,jpg,jpeg,webp,heic,gif}" },
+      { flag: "--sidecar-notes", type: "path", label: "Sidecar notes folder" },
+      { flag: "--sidecar-field", type: "string", label: "Sidecar frontmatter field", default: "ImageText" }
+    ],
+    executionMode: "buffered"
+  },
+  {
+    id: "collection.list",
+    argvPath: ["collection", "list"],
+    category: "infra",
+    label: "Collection \u2192 List",
+    positionals: [],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "collection.remove",
+    argvPath: ["collection", "remove"],
+    category: "infra",
+    label: "Collection \u2192 Remove",
+    positionals: [{ name: "name", type: "string", label: "Collection name", required: true }],
+    flags: [],
+    executionMode: "buffered",
+    destructive: true
+  },
+  {
+    id: "collection.rename",
+    argvPath: ["collection", "rename"],
+    category: "infra",
+    label: "Collection \u2192 Rename",
+    positionals: [
+      { name: "oldName", type: "string", label: "Current name", required: true },
+      { name: "newName", type: "string", label: "New name", required: true }
+    ],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "ls",
+    argvPath: ["ls"],
+    category: "infra",
+    label: "List indexed images",
+    positionals: [{ name: "collection", type: "string", label: "Collection", required: false }],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "index",
+    argvPath: ["index"],
+    category: "infra",
+    label: "Index (scan + extract EXIF/captions)",
+    positionals: [],
+    flags: [{ flag: "--collection", type: "string", label: "Collection" }],
+    executionMode: "streaming"
+  },
+  {
+    id: "embed",
+    argvPath: ["embed"],
+    category: "infra",
+    label: "Generate embeddings (SigLIP 2)",
+    positionals: [],
+    flags: [
+      { flag: "--collection", type: "string", label: "Collection" },
+      { flag: "--force", type: "boolean", label: "Force re-embed" }
+    ],
+    executionMode: "streaming"
+  },
+  {
+    id: "caption",
+    argvPath: ["caption"],
+    category: "infra",
+    label: "Generate AI captions (BLIP)",
+    positionals: [],
+    flags: [
+      { flag: "--collection", type: "string", label: "Collection" },
+      { flag: "--force", type: "boolean", label: "Force overwrite (never overwrites human captions otherwise)" }
+    ],
+    executionMode: "streaming"
+  },
+  {
+    id: "ocr",
+    argvPath: ["ocr"],
+    category: "infra",
+    label: "Extract text via OCR",
+    description: "Present in the qimg CLI but not documented in its README.",
+    positionals: [],
+    flags: [
+      { flag: "--collection", type: "string", label: "Collection" },
+      { flag: "--force", type: "boolean", label: "Force re-OCR" }
+    ],
+    executionMode: "streaming"
+  },
+  {
+    id: "get",
+    argvPath: ["get"],
+    category: "search",
+    label: "Get image metadata",
+    positionals: [{ name: "target", type: "string", label: "Path or #docid", required: true }],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "tsearch",
+    argvPath: ["tsearch"],
+    category: "search",
+    label: "Keyword search (tsearch)",
+    positionals: [{ name: "query", type: "string", label: "Query", required: false }],
+    flags: sharedSearchFlags2(),
+    executionMode: "buffered",
+    jsonFlag: "--json"
+  },
+  {
+    id: "vsearch",
+    argvPath: ["vsearch"],
+    category: "search",
+    label: "Vector / image-similarity search (vsearch)",
+    positionals: [{ name: "query", type: "string", label: "Query", required: false }],
+    flags: sharedSearchFlags2(),
+    executionMode: "buffered",
+    jsonFlag: "--json"
+  },
+  {
+    id: "hsearch",
+    argvPath: ["hsearch"],
+    category: "search",
+    label: "Hybrid search (hsearch)",
+    positionals: [{ name: "query", type: "string", label: "Query", required: false }],
+    flags: sharedSearchFlags2(),
+    executionMode: "buffered",
+    jsonFlag: "--json"
+  },
+  {
+    id: "status",
+    argvPath: ["status"],
+    category: "infra",
+    label: "Status",
+    positionals: [],
+    flags: [],
+    executionMode: "buffered"
+  }
+];
+var qimgSchema = { id: "qimg", commands: commands2 };
+
+// src/cli/schemas/qnode.ts
+var FIELD_ENUM = ["up-frontmatter", "down-frontmatter", "right-inline", "left-inline", "in-inline", "out-inline"];
+var commands3 = [
+  {
+    id: "collection.add",
+    argvPath: ["collection", "add"],
+    category: "infra",
+    label: "Collection \u2192 Add",
+    positionals: [{ name: "path", type: "path", label: "Path", required: true }],
+    flags: [
+      { flag: "--name", type: "string", label: "Collection name", required: true },
+      { flag: "--pattern", type: "string", label: "Glob pattern", default: "**/*.md" },
+      { flag: "--ignore", type: "string", label: "Ignore globs (comma-separated)", repeatable: true },
+      { flag: "--vault-root", type: "path", label: "Vault root (for cross-folder wikilinks)" }
+    ],
+    executionMode: "buffered"
+  },
+  {
+    id: "collection.list",
+    argvPath: ["collection", "list"],
+    category: "infra",
+    label: "Collection \u2192 List",
+    positionals: [],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "collection.remove",
+    argvPath: ["collection", "remove"],
+    category: "infra",
+    label: "Collection \u2192 Remove",
+    positionals: [{ name: "name", type: "string", label: "Collection name", required: true }],
+    flags: [],
+    executionMode: "buffered",
+    destructive: true
+  },
+  {
+    id: "collection.rename",
+    argvPath: ["collection", "rename"],
+    category: "infra",
+    label: "Collection \u2192 Rename",
+    positionals: [
+      { name: "oldName", type: "string", label: "Current name", required: true },
+      { name: "newName", type: "string", label: "New name", required: true }
+    ],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "fields.get",
+    argvPath: ["fields", "get"],
+    category: "infra",
+    label: "Fields \u2192 Get mapping",
+    positionals: [],
+    flags: [{ flag: "--collection", type: "string", label: "Collection" }],
+    executionMode: "buffered"
+  },
+  {
+    id: "fields.set",
+    argvPath: ["fields", "set"],
+    category: "infra",
+    label: "Fields \u2192 Set mapping",
+    positionals: [
+      { name: "field", type: "enum", label: "Field", required: true, enumValues: FIELD_ENUM },
+      { name: "values", type: "string", label: "Frontmatter/inline keys (comma-separated)", required: true }
+    ],
+    flags: [{ flag: "--collection", type: "string", label: "Collection" }],
+    executionMode: "buffered"
+  },
+  {
+    id: "fields.reset",
+    argvPath: ["fields", "reset"],
+    category: "infra",
+    label: "Fields \u2192 Reset to defaults",
+    positionals: [],
+    flags: [{ flag: "--collection", type: "string", label: "Collection" }],
+    executionMode: "buffered"
+  },
+  {
+    id: "index",
+    argvPath: ["index"],
+    category: "infra",
+    label: "Index (build/refresh graph)",
+    positionals: [],
+    flags: [
+      { flag: "--collection", type: "string", label: "Collection" },
+      { flag: "--force", type: "boolean", label: "Force full rebuild" }
+    ],
+    executionMode: "streaming"
+  },
+  {
+    id: "status",
+    argvPath: ["status"],
+    category: "infra",
+    label: "Status",
+    positionals: [],
+    flags: [{ flag: "--collection", type: "string", label: "Collection" }],
+    executionMode: "buffered"
+  },
+  {
+    id: "get",
+    argvPath: ["get"],
+    category: "search",
+    label: "Get node",
+    description: "All incoming/outgoing edges and metrics for a note.",
+    positionals: [{ name: "file", type: "string", label: "File", required: true }],
+    flags: [],
+    executionMode: "buffered"
+  },
+  {
+    id: "neighbors",
+    argvPath: ["neighbors"],
+    category: "search",
+    label: "Neighbors",
+    positionals: [{ name: "file", type: "string", label: "File", required: true }],
+    flags: [
+      {
+        flag: "--category",
+        type: "enum",
+        label: "Category",
+        enumValues: ["Up", "Down", "Right", "Left", "In", "Out", "Uncategorized"]
+      },
+      { flag: "--direction", type: "enum", label: "Direction", enumValues: ["out", "in", "both"], default: "both" }
+    ],
+    executionMode: "buffered",
+    jsonFlag: "--json"
+  },
+  {
+    id: "siblings",
+    argvPath: ["siblings"],
+    category: "search",
+    label: "Siblings",
+    description: "Notes sharing at least N Up/parent links.",
+    positionals: [{ name: "file", type: "string", label: "File", required: true }],
+    flags: [{ flag: "--shared-min", type: "number", label: "Minimum shared links", default: 1 }],
+    executionMode: "buffered",
+    jsonFlag: "--json"
+  },
+  {
+    id: "distance",
+    argvPath: ["distance"],
+    category: "search",
+    label: "Distance (shortest-path hops)",
+    positionals: [
+      { name: "a", type: "string", label: "From file", required: true },
+      { name: "b", type: "string", label: "To file", required: true }
+    ],
+    flags: [
+      { flag: "--max", type: "number", label: "Max hops", default: 6 },
+      { flag: "--include-external", type: "boolean", label: "Include external links" }
+    ],
+    executionMode: "buffered",
+    jsonFlag: "--json"
+  },
+  {
+    id: "path",
+    argvPath: ["path"],
+    category: "search",
+    label: "Path (shortest path as file list)",
+    positionals: [
+      { name: "a", type: "string", label: "From file", required: true },
+      { name: "b", type: "string", label: "To file", required: true }
+    ],
+    flags: [
+      { flag: "--max", type: "number", label: "Max hops", default: 6 },
+      { flag: "--include-external", type: "boolean", label: "Include external links" }
+    ],
+    executionMode: "buffered"
+  },
+  {
+    id: "find-by-distance",
+    argvPath: ["find-by-distance"],
+    category: "search",
+    label: "Find by distance (BFS neighborhood)",
+    positionals: [{ name: "file", type: "string", label: "File", required: true }],
+    flags: [
+      { flag: "--max-distance", type: "number", label: "Max distance", default: 2 },
+      { flag: "--file-type", type: "string", label: "File type tag" },
+      { flag: "--include-existing", type: "boolean", label: "Include existing notes" },
+      { flag: "--include-external", type: "boolean", label: "Include external links" }
+    ],
+    executionMode: "buffered",
+    jsonFlag: "--json"
+  },
+  {
+    id: "metrics.compute",
+    argvPath: ["metrics", "compute"],
+    category: "infra",
+    label: "Metrics \u2192 Compute",
+    description: "PageRank, betweenness, clustering coefficient, degree, community.",
+    positionals: [],
+    flags: [{ flag: "--collection", type: "string", label: "Collection" }],
+    executionMode: "streaming"
+  },
+  {
+    id: "metrics.show",
+    argvPath: ["metrics", "show"],
+    category: "search",
+    label: "Metrics \u2192 Show",
+    positionals: [],
+    flags: [
+      { flag: "--collection", type: "string", label: "Collection" },
+      { flag: "--top", type: "number", label: "Top N" },
+      {
+        flag: "--sort",
+        type: "enum",
+        label: "Sort by",
+        enumValues: ["pagerank", "betweenness", "clustering_coeff", "in_degree", "out_degree", "community"]
+      },
+      {
+        flag: "--filter",
+        type: "string",
+        label: "Min/max filters",
+        description: "field=value pairs, e.g. in_degree=50 (maps to the CLI's --min-<field>/--max-<field> flags; UI wiring for this is a follow-up)",
+        repeatable: true
+      }
+    ],
+    executionMode: "buffered",
+    jsonFlag: "--json"
+  }
+];
+var qnodeSchema = { id: "qnode", commands: commands3 };
+
+// src/cli/schemas/qvoid.ts
+var commands4 = [
+  {
+    id: "collection",
+    argvPath: ["collection"],
+    category: "infra",
+    label: "Register/inspect vault",
+    description: "Run without --path to print the current settings for that collection instead.",
+    positionals: [{ name: "name", type: "string", label: "Collection name", required: true }],
+    flags: [{ flag: "--path", type: "path", label: "Vault path" }],
+    executionMode: "buffered"
+  },
+  {
+    id: "collections",
+    argvPath: ["collections"],
+    category: "infra",
+    label: "List collections",
+    positionals: [],
+    flags: [{ flag: "--remove", type: "string", label: "Unregister a collection" }],
+    executionMode: "buffered"
+  },
+  {
+    id: "index",
+    argvPath: ["index"],
+    category: "infra",
+    label: "Index (extract unresolved wikilinks)",
+    positionals: [],
+    flags: [
+      { flag: "--collection", type: "string", label: "Collection" },
+      { flag: "--force", type: "boolean", label: "Force full rescan" }
+    ],
+    executionMode: "streaming"
+  },
+  {
+    id: "embed",
+    argvPath: ["embed"],
+    category: "infra",
+    label: "Embed unresolved targets",
+    description: "Required before find-similar.",
+    positionals: [],
+    flags: [
+      { flag: "--collection", type: "string", label: "Collection" },
+      { flag: "--force", type: "boolean", label: "Force re-embed" }
+    ],
+    executionMode: "streaming"
+  },
+  {
+    id: "query",
+    argvPath: ["query"],
+    category: "search",
+    label: "Query",
+    positionals: [],
+    flags: [
+      {
+        flag: "--destination",
+        type: "string",
+        label: "Destination type(s)",
+        description: "Comma-separated OR of idea/person/date/file/template/unknown"
+      },
+      { flag: "--origin", type: "string", label: "Origin folder prefix" },
+      { flag: "--semantic-type", type: "string", label: "Semantic-type annotation" },
+      { flag: "--min-occurrences", type: "number", label: "Minimum occurrences" },
+      { flag: "--search", type: "string", label: "Text search" },
+      { flag: "--limit", type: "number", label: "Result limit" },
+      {
+        flag: "--format",
+        type: "enum",
+        label: "Output format",
+        enumValues: ["summary", "detailed", "json"],
+        default: "summary"
+      }
+    ],
+    executionMode: "buffered"
+  },
+  {
+    id: "find-similar",
+    argvPath: ["find-similar"],
+    category: "search",
+    label: "Find similar / duplicate detection",
+    positionals: [{ name: "query", type: "string", label: "Query", required: false }],
+    flags: [
+      { flag: "--cluster", type: "boolean", label: "Cluster mode" },
+      { flag: "--top-k", type: "number", label: "Top K", default: 10 },
+      { flag: "--min-score", type: "number", label: "Minimum score", default: 0.5 },
+      { flag: "--threshold", type: "number", label: "Cluster threshold", default: 0.82 },
+      { flag: "--collection", type: "string", label: "Collection" }
+    ],
+    executionMode: "buffered"
+  },
+  {
+    id: "classify",
+    argvPath: ["classify"],
+    category: "infra",
+    label: "Classify low-confidence entries",
+    description: "Requires a trained classifier model.",
+    positionals: [],
+    flags: [
+      { flag: "--collection", type: "string", label: "Collection" },
+      { flag: "--dry-run", type: "boolean", label: "Dry run" }
+    ],
+    executionMode: "streaming"
+  },
+  {
+    id: "classifier.train",
+    argvPath: ["classifier", "train"],
+    category: "infra",
+    label: "Classifier \u2192 Train",
+    positionals: [
+      { name: "path", type: "path", label: "Examples directory", required: true },
+      { name: "label", type: "string", label: "Label", required: true }
+    ],
+    flags: [
+      { flag: "--append", type: "boolean", label: "Append to existing training data" },
+      { flag: "--output", type: "path", label: "Output model path" }
+    ],
+    executionMode: "streaming",
+    destructive: true
+  },
+  {
+    id: "classifier.retrain",
+    argvPath: ["classifier", "retrain"],
+    category: "infra",
+    label: "Classifier \u2192 Retrain",
+    description: "Rebuilds the model from all accumulated training files.",
+    positionals: [],
+    flags: [{ flag: "--output", type: "path", label: "Output model path" }],
+    executionMode: "streaming",
+    destructive: true
+  }
+];
+var qvoidSchema = { id: "qvoid", commands: commands4 };
+
+// src/cli/toolRegistry.ts
+var TOOL_IDS = ["qmd", "qimg", "qnode", "qvoid"];
+var TOOLS = {
+  qmd: {
+    id: "qmd",
+    displayName: "qmd (search)",
+    npmPackage: "@idan_ariav/qmd",
+    binaryName: "qmd",
+    configPathHint: "~/.config/qmd/index.yml",
+    healthCheckCommand: ["status"],
+    schema: qmdSchema
+  },
+  qimg: {
+    id: "qimg",
+    displayName: "qimg (image search)",
+    npmPackage: "@idan_ariav/qimg",
+    binaryName: "qimg",
+    configPathHint: "~/.config/qimg/index.yml",
+    healthCheckCommand: ["status"],
+    schema: qimgSchema
+  },
+  qnode: {
+    id: "qnode",
+    displayName: "qnode (link graph)",
+    npmPackage: "@idan_ariav/qnode",
+    binaryName: "qnode",
+    configPathHint: "~/.config/qnode/index.yml",
+    healthCheckCommand: ["status"],
+    schema: qnodeSchema
+  },
+  qvoid: {
+    id: "qvoid",
+    displayName: "qvoid (unresolved links)",
+    npmPackage: "@idan_ariav/qvoid",
+    binaryName: "qvoid",
+    configPathHint: "~/.config/qvoid/collections.toml",
+    healthCheckCommand: ["collections"],
+    schema: qvoidSchema
+  }
 };
 
 // src/settings.ts
@@ -169,9 +1046,19 @@ var DEFAULT_SETTINGS = {
   similarityThreshold: DEFAULTS.SIMILARITY_THRESHOLD,
   filterLinkedByDefault: false,
   enableStreaming: true,
-  qmdPath: DEFAULTS.QMD_PATH,
+  toolPaths: Object.fromEntries(TOOL_IDS.map((id) => [id, ""])),
+  commandTimeoutMs: DEFAULTS.DEFAULT_COMMAND_TIMEOUT_MS,
+  setupWizardShown: false,
   defaultCollection: DEFAULTS.QMD_DEFAULT_COLLECTION
 };
+function migrateLegacySettings(settings) {
+  var _a;
+  if (settings.qmdPath && !((_a = settings.toolPaths) == null ? void 0 : _a.qmd)) {
+    settings.toolPaths = { ...settings.toolPaths, qmd: settings.qmdPath };
+  }
+  delete settings.qmdPath;
+  return settings;
+}
 function findFolderConfig(filePath, folderConfigs) {
   let bestMatch;
   let bestLength = -1;
@@ -199,7 +1086,7 @@ function resolveParseSettings(filePath, settings) {
 }
 
 // src/settingsTab.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // src/ollama/chatClient.ts
 var import_obsidian = require("obsidian");
@@ -295,35 +1182,455 @@ var OllamaChatClient = class {
   }
 };
 
+// src/cli/binaryResolver.ts
+var import_fs2 = require("fs");
+
+// src/cli/processRunner.ts
+var import_child_process = require("child_process");
+var KILL_GRACE_MS = 3e3;
+var CliRunner = class {
+  run(binPath, args, opts) {
+    return new Promise((resolve, reject) => {
+      var _a, _b;
+      const child = (0, import_child_process.spawn)(binPath, args, { shell: false, env: opts.env, cwd: opts.cwd });
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      let timeoutHandle;
+      const finish = (fn) => {
+        if (settled)
+          return;
+        settled = true;
+        if (timeoutHandle)
+          clearTimeout(timeoutHandle);
+        fn();
+      };
+      if (opts.timeoutMs) {
+        timeoutHandle = setTimeout(() => {
+          child.kill("SIGTERM");
+          setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS);
+          finish(
+            () => reject(new Error(`Command timed out after ${opts.timeoutMs}ms: ${binPath} ${args.join(" ")}`))
+          );
+        }, opts.timeoutMs);
+      }
+      (_a = child.stdout) == null ? void 0 : _a.on("data", (chunk) => stdout += chunk.toString());
+      (_b = child.stderr) == null ? void 0 : _b.on("data", (chunk) => stderr += chunk.toString());
+      child.on("error", (error) => finish(() => reject(error)));
+      child.on("close", (code) => finish(() => resolve({ stdout, stderr, code: code != null ? code : -1 })));
+    });
+  }
+  runStreaming(binPath, args, opts) {
+    const child = (0, import_child_process.spawn)(binPath, args, { shell: false, env: opts.env, cwd: opts.cwd });
+    let settled = false;
+    let timeoutHandle;
+    const promise = new Promise((resolve, reject) => {
+      var _a, _b;
+      const finish = (fn) => {
+        if (settled)
+          return;
+        settled = true;
+        if (timeoutHandle)
+          clearTimeout(timeoutHandle);
+        fn();
+      };
+      if (opts.timeoutMs) {
+        timeoutHandle = setTimeout(() => {
+          child.kill("SIGTERM");
+          setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS);
+          finish(
+            () => reject(new Error(`Command timed out after ${opts.timeoutMs}ms: ${binPath} ${args.join(" ")}`))
+          );
+        }, opts.timeoutMs);
+      }
+      (_a = child.stdout) == null ? void 0 : _a.on("data", (chunk) => {
+        var _a2;
+        return (_a2 = opts.onStdout) == null ? void 0 : _a2.call(opts, chunk.toString());
+      });
+      (_b = child.stderr) == null ? void 0 : _b.on("data", (chunk) => {
+        var _a2;
+        return (_a2 = opts.onStderr) == null ? void 0 : _a2.call(opts, chunk.toString());
+      });
+      child.on("error", (error) => finish(() => reject(error)));
+      child.on("close", (code) => finish(() => resolve({ code: code != null ? code : -1 })));
+    });
+    return {
+      promise,
+      kill: () => {
+        child.kill("SIGTERM");
+        setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS);
+      }
+    };
+  }
+};
+
+// src/cli/pathResolver.ts
+var import_fs = require("fs");
+var import_os = require("os");
+var import_path = require("path");
+var import_child_process2 = require("child_process");
+var cachedEnvPromise;
+function highestNvmNodeBin() {
+  const nvmDir = (0, import_path.join)((0, import_os.homedir)(), ".nvm", "versions", "node");
+  if (!(0, import_fs.existsSync)(nvmDir))
+    return void 0;
+  try {
+    const versions = (0, import_fs.readdirSync)(nvmDir).filter((v) => /^v\d+\.\d+\.\d+$/.test(v));
+    if (versions.length === 0)
+      return void 0;
+    versions.sort((a, b) => {
+      const pa = a.slice(1).split(".").map(Number);
+      const pb = b.slice(1).split(".").map(Number);
+      for (let i = 0; i < 3; i++) {
+        if (pa[i] !== pb[i])
+          return pa[i] - pb[i];
+      }
+      return 0;
+    });
+    return (0, import_path.join)(nvmDir, versions[versions.length - 1], "bin");
+  } catch (e) {
+    return void 0;
+  }
+}
+function staticCandidateDirs() {
+  const home = (0, import_os.homedir)();
+  const candidates = process.platform === "win32" ? [(0, import_path.join)(home, "AppData", "Roaming", "npm"), (0, import_path.join)(home, "AppData", "Local", "Volta", "bin")] : [
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    (0, import_path.join)(home, ".volta", "bin"),
+    (0, import_path.join)(home, ".npm-global", "bin"),
+    (0, import_path.join)(home, ".local", "share", "pnpm")
+  ];
+  const nvmBin = highestNvmNodeBin();
+  if (nvmBin)
+    candidates.push(nvmBin);
+  return candidates.filter((dir) => (0, import_fs.existsSync)(dir));
+}
+function npmPrefixBin() {
+  return new Promise((resolve) => {
+    var _a;
+    try {
+      const child = (0, import_child_process2.spawn)("npm", ["config", "get", "prefix"], { shell: false, env: process.env });
+      let out = "";
+      (_a = child.stdout) == null ? void 0 : _a.on("data", (chunk) => out += chunk.toString());
+      child.on("error", () => resolve(void 0));
+      child.on("close", (code) => {
+        if (code !== 0)
+          return resolve(void 0);
+        const prefix = out.trim();
+        if (!prefix)
+          return resolve(void 0);
+        const bin = process.platform === "win32" ? prefix : (0, import_path.join)(prefix, "bin");
+        resolve((0, import_fs.existsSync)(bin) ? bin : void 0);
+      });
+    } catch (e) {
+      resolve(void 0);
+    }
+  });
+}
+async function buildAugmentedEnv() {
+  if (!cachedEnvPromise) {
+    cachedEnvPromise = (async () => {
+      var _a;
+      const dirs = staticCandidateDirs();
+      const npmBin = await npmPrefixBin();
+      if (npmBin && !dirs.includes(npmBin))
+        dirs.push(npmBin);
+      const existingPath = (_a = process.env.PATH) != null ? _a : "";
+      return {
+        ...process.env,
+        PATH: [...dirs, existingPath].filter(Boolean).join(import_path.delimiter)
+      };
+    })();
+  }
+  return cachedEnvPromise;
+}
+function findExecutableInPath(binaryName, env) {
+  var _a;
+  const dirs = ((_a = env.PATH) != null ? _a : "").split(import_path.delimiter).filter(Boolean);
+  for (const dir of dirs) {
+    const candidate = (0, import_path.join)(dir, binaryName);
+    if (!(0, import_fs.existsSync)(candidate))
+      continue;
+    try {
+      (0, import_fs.accessSync)(candidate, import_fs.constants.X_OK);
+      return candidate;
+    } catch (e) {
+      continue;
+    }
+  }
+  return void 0;
+}
+
+// src/cli/binaryResolver.ts
+var DETECT_TIMEOUT_MS = 1e4;
+var runner = new CliRunner();
+function isExecutablePath(path) {
+  try {
+    (0, import_fs2.accessSync)(path, import_fs2.constants.X_OK);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+function resolveExecutableTarget(binaryName, overridePath) {
+  const useOverride = !!overridePath && (0, import_fs2.existsSync)(overridePath) && isExecutablePath(overridePath);
+  return useOverride ? overridePath : binaryName;
+}
+async function detectBinary(binaryName, healthCheckArgs, overridePath) {
+  var _a, _b;
+  const env = await buildAugmentedEnv();
+  const target = resolveExecutableTarget(binaryName, overridePath);
+  const resolvedPath = target !== binaryName ? target : (_a = findExecutableInPath(binaryName, env)) != null ? _a : target;
+  try {
+    const result = await runner.run(target, healthCheckArgs, { env, timeoutMs: DETECT_TIMEOUT_MS });
+    if (result.code === 0) {
+      return { status: "healthy", resolvedPath };
+    }
+    return {
+      status: "unhealthy",
+      resolvedPath,
+      message: result.stderr.trim() || result.stdout.trim() || `exited with code ${result.code}`
+    };
+  } catch (error) {
+    const err = error;
+    if (err.code === "ENOENT") {
+      return { status: "not-found" };
+    }
+    return { status: "unhealthy", message: (_b = err.message) != null ? _b : String(error) };
+  }
+}
+
+// src/views/setupWizardModal.ts
+var import_obsidian2 = require("obsidian");
+var NODE_URL = "https://nodejs.org/";
+var NVM_URL = "https://github.com/nvm-sh/nvm";
+var HOMEBREW_URL = "https://brew.sh/";
+var SetupWizardModal = class extends import_obsidian2.Modal {
+  constructor(app, plugin) {
+    super(app);
+    this.runner = new CliRunner();
+    this.nodeAvailable = false;
+    this.cards = {};
+    this.activeInstalls = {};
+    this.plugin = plugin;
+  }
+  async onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("pkm-rag-wizard");
+    contentEl.createEl("h2", { text: "PKM tools setup" });
+    contentEl.createEl("p", {
+      text: "Detect and install qmd, qimg, qnode, and qvoid \u2014 the CLI tools this plugin drives.",
+      cls: "setting-item-description"
+    });
+    const prereqEl = contentEl.createDiv({ cls: "pkm-rag-wizard-prereq" });
+    prereqEl.setText("Checking for Node.js / npm...");
+    const cardsEl = contentEl.createDiv({ cls: "pkm-rag-wizard-cards" });
+    for (const id of Object.keys(TOOLS)) {
+      this.renderCard(cardsEl, id);
+    }
+    const actionsEl = contentEl.createDiv({ cls: "pkm-rag-wizard-footer" });
+    const recheckBtn = actionsEl.createEl("button", { text: "Re-check all" });
+    recheckBtn.addEventListener("click", () => this.refreshAll());
+    await this.checkPrereqs(prereqEl);
+    await this.refreshAll();
+  }
+  onClose() {
+    for (const handle of Object.values(this.activeInstalls)) {
+      handle == null ? void 0 : handle.kill();
+    }
+    this.contentEl.empty();
+  }
+  async checkPrereqs(prereqEl) {
+    const [node2, npm] = await Promise.all([
+      detectBinary("node", ["--version"]),
+      detectBinary("npm", ["--version"])
+    ]);
+    this.nodeAvailable = node2.status === "healthy" && npm.status === "healthy";
+    prereqEl.empty();
+    if (this.nodeAvailable) {
+      prereqEl.createEl("p", { text: "Node.js and npm are available.", cls: "pkm-rag-wizard-ok" });
+      return;
+    }
+    prereqEl.addClass("pkm-rag-wizard-warning");
+    prereqEl.createEl("p", {
+      text: "Node.js/npm weren't found, so tools can't be installed automatically. Install one of the following, then reopen this wizard:"
+    });
+    const list2 = prereqEl.createEl("ul");
+    this.addLink(list2, "Node.js (nodejs.org)", NODE_URL);
+    this.addLink(list2, "nvm (Node version manager)", NVM_URL);
+    this.addLink(list2, "Homebrew (brew install node)", HOMEBREW_URL);
+    for (const card of Object.values(this.cards)) {
+      if (card)
+        card.installBtn.disabled = true;
+    }
+  }
+  addLink(list2, text3, url) {
+    const item = list2.createEl("li");
+    item.createEl("a", { text: text3, href: url, attr: { target: "_blank", rel: "noopener" } });
+  }
+  renderCard(container, id) {
+    const tool = TOOLS[id];
+    const card = container.createDiv({ cls: "pkm-rag-wizard-card" });
+    card.createEl("h3", { text: tool.displayName });
+    card.createEl("p", { text: tool.npmPackage, cls: "setting-item-description" });
+    const statusEl = card.createDiv({ cls: "pkm-rag-wizard-status" });
+    statusEl.setText("Checking...");
+    const actionsEl = card.createDiv({ cls: "pkm-rag-wizard-card-actions" });
+    const installBtn = actionsEl.createEl("button", { text: "Install" });
+    const cancelBtn = actionsEl.createEl("button", { text: "Cancel" });
+    cancelBtn.addClass("pkm-rag-hidden");
+    const logEl = card.createEl("pre", { cls: "pkm-rag-wizard-log pkm-rag-hidden" });
+    installBtn.addEventListener("click", () => this.installTool(id));
+    cancelBtn.addEventListener("click", () => {
+      var _a;
+      (_a = this.activeInstalls[id]) == null ? void 0 : _a.kill();
+    });
+    this.cards[id] = { statusEl, installBtn, cancelBtn, logEl };
+  }
+  describeStatus(result) {
+    switch (result.status) {
+      case "healthy":
+        return "Detected";
+      case "unhealthy":
+        return `Not responding${result.message ? ` (${result.message})` : ""}`;
+      case "not-found":
+        return "Not found";
+    }
+  }
+  async refreshAll() {
+    await Promise.all(Object.keys(TOOLS).map((id) => this.refreshStatus(id)));
+  }
+  async refreshStatus(id) {
+    const card = this.cards[id];
+    if (!card)
+      return;
+    const tool = TOOLS[id];
+    const result = await detectBinary(tool.binaryName, tool.healthCheckCommand, this.plugin.settings.toolPaths[id] || void 0);
+    card.statusEl.setText(this.describeStatus(result));
+    card.statusEl.className = `pkm-rag-wizard-status pkm-rag-wizard-status-${result.status}`;
+    card.installBtn.setText(result.status === "healthy" ? "Reinstall" : "Install");
+    card.installBtn.disabled = !this.nodeAvailable;
+    if (result.status === "healthy" && result.resolvedPath && !this.plugin.settings.toolPaths[id]) {
+      this.plugin.settings.toolPaths[id] = result.resolvedPath;
+      await this.plugin.saveSettings();
+    }
+  }
+  async installTool(id) {
+    const card = this.cards[id];
+    if (!card || this.activeInstalls[id])
+      return;
+    const tool = TOOLS[id];
+    card.installBtn.disabled = true;
+    card.cancelBtn.removeClass("pkm-rag-hidden");
+    card.logEl.removeClass("pkm-rag-hidden");
+    card.logEl.setText("");
+    card.statusEl.setText("Installing...");
+    card.statusEl.className = "pkm-rag-wizard-status pkm-rag-wizard-status-installing";
+    const env = await buildAugmentedEnv();
+    const append = (chunk) => {
+      card.logEl.setText(card.logEl.getText() + chunk);
+      card.logEl.scrollTop = card.logEl.scrollHeight;
+    };
+    const handle = this.runner.runStreaming("npm", ["install", "-g", tool.npmPackage], {
+      env,
+      onStdout: append,
+      onStderr: append
+    });
+    this.activeInstalls[id] = handle;
+    try {
+      const { code } = await handle.promise;
+      if (code !== 0) {
+        new import_obsidian2.Notice(`${tool.displayName} install failed (exit ${code}). See the log for details.`);
+      }
+    } catch (error) {
+      append(`
+[cancelled or failed: ${error.message}]
+`);
+    } finally {
+      delete this.activeInstalls[id];
+      card.cancelBtn.addClass("pkm-rag-hidden");
+      card.installBtn.disabled = !this.nodeAvailable;
+      await this.refreshStatus(id);
+    }
+  }
+};
+
 // src/settingsTab.ts
-var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
+var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
   /** Helper for the common text-input setting pattern. */
   addTextSetting(container, name, desc, placeholder, getValue, setValue) {
-    return new import_obsidian2.Setting(container).setName(name).setDesc(desc).addText(
+    return new import_obsidian3.Setting(container).setName(name).setDesc(desc).addText(
       (text3) => text3.setPlaceholder(placeholder).setValue(getValue()).onChange(async (value) => {
         setValue(value);
         await this.plugin.saveSettings();
       })
     );
   }
+  describeStatus(result) {
+    switch (result.status) {
+      case "healthy":
+        return "Detected";
+      case "unhealthy":
+        return `Not responding${result.message ? ` (${result.message})` : ""}`;
+      case "not-found":
+        return "Not found";
+    }
+  }
+  /** Renders one tool's status badge, path override field, and a "Test" button. */
+  renderToolSetting(containerEl, id) {
+    const tool = TOOLS[id];
+    const wrapper = containerEl.createDiv({ cls: "pkm-rag-tool-setting" });
+    const statusEl = wrapper.createDiv({ cls: "pkm-rag-tool-status" });
+    statusEl.setText("Status: unknown");
+    this.addTextSetting(
+      wrapper,
+      tool.displayName,
+      `Path to the ${tool.binaryName} binary (leave blank to auto-detect)`,
+      "(auto-detected)",
+      () => {
+        var _a;
+        return (_a = this.plugin.settings.toolPaths[id]) != null ? _a : "";
+      },
+      (v) => {
+        this.plugin.settings.toolPaths[id] = v;
+      }
+    );
+    new import_obsidian3.Setting(wrapper).setName(`Test ${tool.binaryName} connection`).setDesc(`Check if ${tool.binaryName} is reachable`).addButton(
+      (btn) => btn.setButtonText("Test").onClick(async () => {
+        const result = await detectBinary(
+          tool.binaryName,
+          tool.healthCheckCommand,
+          this.plugin.settings.toolPaths[id] || void 0
+        );
+        const label = this.describeStatus(result);
+        statusEl.setText(`Status: ${label}`);
+        new import_obsidian3.Notice(`${tool.displayName}: ${label}`);
+      })
+    ).addButton(
+      (btn) => btn.setButtonText("Setup wizard").onClick(() => {
+        new SetupWizardModal(this.app, this.plugin).open();
+      })
+    );
+  }
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h3", { text: "QMD" });
-    this.addTextSetting(
-      containerEl,
-      "QMD path",
-      "Path to the qmd binary",
-      "qmd",
-      () => this.plugin.settings.qmdPath,
-      (v) => {
-        this.plugin.settings.qmdPath = v;
-      }
-    );
+    containerEl.createEl("h3", { text: "Tools" });
+    containerEl.createEl("p", {
+      text: "qmd, qimg, qnode, and qvoid are separate CLI tools this plugin drives. Leave a path blank to auto-detect it.",
+      cls: "setting-item-description"
+    });
+    for (const id of Object.keys(TOOLS)) {
+      this.renderToolSetting(containerEl, id);
+    }
+    containerEl.createEl("h4", { text: "QMD (RAG chat)" });
     this.addTextSetting(
       containerEl,
       "Default collection",
@@ -333,14 +1640,6 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
       (v) => {
         this.plugin.settings.defaultCollection = v;
       }
-    );
-    new import_obsidian2.Setting(containerEl).setName("Test QMD connection").setDesc("Check if QMD is reachable").addButton(
-      (btn) => btn.setButtonText("Test").onClick(async () => {
-        const ok2 = await this.plugin.qmdClient.isAvailable();
-        new import_obsidian2.Notice(
-          ok2 ? "QMD is connected and available." : "Cannot reach QMD. Is it installed?"
-        );
-      })
     );
     containerEl.createEl("h3", { text: "Ollama (Chat)" });
     this.addTextSetting(
@@ -363,14 +1662,14 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
         this.plugin.settings.chatModel = v;
       }
     );
-    new import_obsidian2.Setting(containerEl).setName("Test Ollama connection").setDesc("Check if Ollama is reachable").addButton(
+    new import_obsidian3.Setting(containerEl).setName("Test Ollama connection").setDesc("Check if Ollama is reachable").addButton(
       (btn) => btn.setButtonText("Test").onClick(async () => {
         const client = new OllamaChatClient(
           this.plugin.settings.ollamaUrl,
           this.plugin.settings.chatModel
         );
         const ok2 = await client.isAvailable();
-        new import_obsidian2.Notice(
+        new import_obsidian3.Notice(
           ok2 ? "Ollama is connected and available." : "Cannot reach Ollama. Is it running?"
         );
       })
@@ -380,7 +1679,7 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
       text: "Controls which part of notes is used as context for the LLM. QMD finds relevant documents; these settings control what content is extracted from each result.",
       cls: "setting-item-description"
     });
-    new import_obsidian2.Setting(containerEl).setName("Content mode").setDesc(
+    new import_obsidian3.Setting(containerEl).setName("Content mode").setDesc(
       "'Section' extracts only the configured header section. 'Full' uses entire note content."
     ).addDropdown(
       (dd) => dd.addOption("section", "Section only").addOption("full", "Full content").setValue(this.plugin.settings.contentMode).onChange(async (value) => {
@@ -398,7 +1697,7 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
         this.plugin.settings.noteSectionHeaderName = v;
       }
     );
-    new import_obsidian2.Setting(containerEl).setName("Section header level").setDesc(
+    new import_obsidian3.Setting(containerEl).setName("Section header level").setDesc(
       "Heading level to match (e.g. 2 = ##, 3 = ###)"
     ).addDropdown(
       (dd) => dd.addOption("1", "H1 (#)").addOption("2", "H2 (##)").addOption("3", "H3 (###)").addOption("4", "H4 (####)").addOption("5", "H5 (#####)").addOption("6", "H6 (######)").setValue(String(this.plugin.settings.noteSectionHeaderLevel)).onChange(async (value) => {
@@ -423,7 +1722,7 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
     });
     const folderListEl = containerEl.createDiv("pkm-folder-list");
     this.renderFolderList(folderListEl);
-    new import_obsidian2.Setting(containerEl).addButton(
+    new import_obsidian3.Setting(containerEl).addButton(
       (btn) => btn.setButtonText("+ Add folder").onClick(async () => {
         this.plugin.settings.folderConfigs.push({ folder: "" });
         await this.plugin.saveSettings();
@@ -432,25 +1731,25 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
       })
     );
     containerEl.createEl("h3", { text: "Retrieval" });
-    new import_obsidian2.Setting(containerEl).setName("Top K (Explore mode)").setDesc("Number of results retrieved for Q&A (1-20)").addSlider(
+    new import_obsidian3.Setting(containerEl).setName("Top K (Explore mode)").setDesc("Number of results retrieved for Q&A (1-20)").addSlider(
       (slider) => slider.setLimits(1, 20, 1).setValue(this.plugin.settings.topK).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.topK = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian2.Setting(containerEl).setName("Top K (Related notes)").setDesc("Number of similar notes to show (1-30)").addSlider(
+    new import_obsidian3.Setting(containerEl).setName("Top K (Related notes)").setDesc("Number of similar notes to show (1-30)").addSlider(
       (slider) => slider.setLimits(1, 30, 1).setValue(this.plugin.settings.similarTopK).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.similarTopK = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian2.Setting(containerEl).setName("Top K (Gap analysis)").setDesc("Number of results for gap analysis (1-30)").addSlider(
+    new import_obsidian3.Setting(containerEl).setName("Top K (Gap analysis)").setDesc("Number of results for gap analysis (1-30)").addSlider(
       (slider) => slider.setLimits(1, 30, 1).setValue(this.plugin.settings.gapAnalysisTopK).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.gapAnalysisTopK = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian2.Setting(containerEl).setName("Similarity threshold").setDesc(
+    new import_obsidian3.Setting(containerEl).setName("Similarity threshold").setDesc(
       "Minimum score to include results (0.0-1.0)"
     ).addSlider(
       (slider) => slider.setLimits(0, 100, 5).setValue(
@@ -463,7 +1762,7 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
       })
     );
     containerEl.createEl("h3", { text: "UI" });
-    new import_obsidian2.Setting(containerEl).setName("Filter linked notes by default").setDesc(
+    new import_obsidian3.Setting(containerEl).setName("Filter linked notes by default").setDesc(
       "Exclude already-linked notes from Related Notes results by default"
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.filterLinkedByDefault).onChange(async (value) => {
@@ -471,7 +1770,7 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian2.Setting(containerEl).setName("Enable streaming").setDesc("Stream chat responses token by token").addToggle(
+    new import_obsidian3.Setting(containerEl).setName("Enable streaming").setDesc("Stream chat responses token by token").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.enableStreaming).onChange(async (value) => {
         this.plugin.settings.enableStreaming = value;
         await this.plugin.saveSettings();
@@ -489,12 +1788,8 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
     }
     for (let i = 0; i < configs.length; i++) {
       const config = configs[i];
-      const groupEl = containerEl.createDiv("pkm-folder-config-group");
-      groupEl.style.border = "1px solid var(--background-modifier-border)";
-      groupEl.style.borderRadius = "8px";
-      groupEl.style.padding = "8px 12px";
-      groupEl.style.marginBottom = "8px";
-      new import_obsidian2.Setting(groupEl).setName(`Folder ${i + 1}`).addText(
+      const groupEl = containerEl.createDiv("pkm-folder-config-group pkm-rag-folder-group");
+      new import_obsidian3.Setting(groupEl).setName(`Folder ${i + 1}`).addText(
         (text3) => text3.setPlaceholder("e.g. Content/Notes").setValue(config.folder).onChange(async (value) => {
           config.folder = value.trim().replace(/\/+$/, "");
           await this.plugin.saveSettings();
@@ -507,7 +1802,7 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
           this.renderFolderList(containerEl);
         })
       );
-      new import_obsidian2.Setting(groupEl).setName("Content mode").addDropdown(
+      new import_obsidian3.Setting(groupEl).setName("Content mode").addDropdown(
         (dd) => {
           var _a;
           return dd.addOption("", "Use default").addOption("section", "Section only").addOption("full", "Full content").setValue((_a = config.contentMode) != null ? _a : "").onChange(async (value) => {
@@ -516,7 +1811,7 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
           });
         }
       );
-      new import_obsidian2.Setting(groupEl).setName("Section header name").addText(
+      new import_obsidian3.Setting(groupEl).setName("Section header name").addText(
         (text3) => {
           var _a;
           return text3.setPlaceholder("(use default)").setValue((_a = config.noteSectionHeaderName) != null ? _a : "").onChange(async (value) => {
@@ -525,7 +1820,7 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
           });
         }
       );
-      new import_obsidian2.Setting(groupEl).setName("Section header level").addDropdown(
+      new import_obsidian3.Setting(groupEl).setName("Section header level").addDropdown(
         (dd) => dd.addOption("", "Use default").addOption("1", "H1 (#)").addOption("2", "H2 (##)").addOption("3", "H3 (###)").addOption("4", "H4 (####)").addOption("5", "H5 (#####)").addOption("6", "H6 (######)").setValue(
           config.noteSectionHeaderLevel != null ? String(config.noteSectionHeaderLevel) : ""
         ).onChange(async (value) => {
@@ -537,109 +1832,215 @@ var PkmRagSettingTab = class extends import_obsidian2.PluginSettingTab {
   }
 };
 
-// src/qmd/qmdClient.ts
-var import_child_process = require("child_process");
+// src/cli/genericClient.ts
+var JSON_OUTPUT_VALUE_KEY = "__outputJson";
+var DEFAULT_TIMEOUT_MS = 3e4;
+function buildArgv(command, values) {
+  const argv = [...command.argvPath];
+  for (const positional of command.positionals) {
+    const value = values[positional.name];
+    if (value === void 0 || value === null || value === "") {
+      if (positional.required) {
+        throw new Error(`Missing required argument: ${positional.label}`);
+      }
+      continue;
+    }
+    argv.push(String(value));
+  }
+  for (const flag of command.flags) {
+    const value = values[flag.flag];
+    if (value === void 0 || value === null)
+      continue;
+    if (flag.type === "boolean") {
+      if (value === true)
+        argv.push(flag.flag);
+      continue;
+    }
+    if (flag.repeatable) {
+      const items = Array.isArray(value) ? value : [value];
+      for (const item of items) {
+        if (item === void 0 || item === null || item === "")
+          continue;
+        argv.push(flag.flag, String(item));
+      }
+      continue;
+    }
+    if (value === "")
+      continue;
+    argv.push(flag.flag, String(value));
+  }
+  if (command.jsonFlag && values[JSON_OUTPUT_VALUE_KEY] === true) {
+    argv.push(command.jsonFlag);
+  }
+  return argv;
+}
+function attachJson(command, argv, result) {
+  if (!command.jsonFlag || !argv.includes(command.jsonFlag))
+    return result;
+  try {
+    return { ...result, json: JSON.parse(result.stdout) };
+  } catch (e) {
+    return result;
+  }
+}
+var GenericCliClient = class {
+  constructor(binaryName, healthCheckCommand, schema, overridePath, defaultTimeoutMs = DEFAULT_TIMEOUT_MS) {
+    this.binaryName = binaryName;
+    this.healthCheckCommand = healthCheckCommand;
+    this.schema = schema;
+    this.overridePath = overridePath;
+    this.defaultTimeoutMs = defaultTimeoutMs;
+    this.runner = new CliRunner();
+  }
+  updatePath(overridePath) {
+    this.overridePath = overridePath;
+  }
+  updateDefaultTimeout(timeoutMs) {
+    this.defaultTimeoutMs = timeoutMs;
+  }
+  async isAvailable() {
+    const result = await this.detect();
+    return result.status === "healthy";
+  }
+  detect() {
+    return detectBinary(this.binaryName, this.healthCheckCommand, this.overridePath);
+  }
+  getCommand(commandId) {
+    const command = this.schema.commands.find((c) => c.id === commandId);
+    if (!command)
+      throw new Error(`Unknown command "${commandId}" for tool "${this.schema.id}"`);
+    return command;
+  }
+  listCommands() {
+    return this.schema.commands;
+  }
+  buildArgvPreview(commandId, values) {
+    return buildArgv(this.getCommand(commandId), values);
+  }
+  /** Buffered execution: waits for the process to exit and returns the full result. */
+  async runCommand(commandId, values = {}, timeoutMs) {
+    const command = this.getCommand(commandId);
+    const argv = buildArgv(command, values);
+    const env = await buildAugmentedEnv();
+    const bin = resolveExecutableTarget(this.binaryName, this.overridePath);
+    const result = await this.runner.run(bin, argv, {
+      env,
+      timeoutMs: timeoutMs != null ? timeoutMs : this.defaultTimeoutMs
+    });
+    return attachJson(command, argv, result);
+  }
+  /** Streaming execution: returns a handle with kill() immediately, output arrives via callbacks. */
+  async runCommandStreaming(commandId, values = {}, onStdout, onStderr) {
+    const command = this.getCommand(commandId);
+    const argv = buildArgv(command, values);
+    const env = await buildAugmentedEnv();
+    const bin = resolveExecutableTarget(this.binaryName, this.overridePath);
+    let stdout = "";
+    let stderr = "";
+    const handle = this.runner.runStreaming(bin, argv, {
+      env,
+      onStdout: (chunk) => {
+        stdout += chunk;
+        onStdout == null ? void 0 : onStdout(chunk);
+      },
+      onStderr: (chunk) => {
+        stderr += chunk;
+        onStderr == null ? void 0 : onStderr(chunk);
+      }
+    });
+    const done = handle.promise.then(({ code }) => attachJson(command, argv, { stdout, stderr, code }));
+    return { kill: handle.kill, done, argv, command };
+  }
+};
+
+// src/cli/tools/qmdClient.ts
 var QmdClient = class {
   constructor(qmdPath) {
-    this.qmdPath = qmdPath;
+    this.client = new GenericCliClient("qmd", TOOLS.qmd.healthCheckCommand, qmdSchema, qmdPath || void 0);
   }
   updatePath(qmdPath) {
-    this.qmdPath = qmdPath;
+    this.client.updatePath(qmdPath || void 0);
   }
-  /** Check if the QMD binary is available and responsive. */
+  /** Check if the qmd binary is available and responsive. */
   async isAvailable() {
-    try {
-      await this.execQmd(["status"]);
-      return true;
-    } catch (error) {
-      console.error("QMD availability check failed:", error);
-      return false;
-    }
+    return this.client.isAvailable();
   }
-  /** Get QMD status including collections and document counts. */
+  /** Get qmd status including collections and document counts (raw text). */
   async status() {
-    return this.execQmd(["status"]);
+    const result = await this.client.runCommand("status");
+    return result.stdout;
   }
-  /** Get available collection names from QMD status output. */
+  /** Get available collection names, parsed from `collection list`'s formatted output. */
   async getCollections() {
     try {
-      const output = await this.execQmd(["collection", "list"]);
-      return output.split("\n").map((line) => line.trim()).filter(Boolean);
+      const result = await this.client.runCommand("collection.list");
+      return this.parseCollectionNames(result.stdout);
     } catch (e) {
       return [];
     }
   }
   /** Semantic vector search. */
   async vectorSearch(query, options = {}) {
-    const args = this.buildSearchArgs("search", `vec:${query}`, options);
-    return this.execJsonSearch(args);
-  }
-  /** Deep search with query expansion and reranking. */
-  async deepSearch(query, options = {}) {
-    const args = this.buildSearchArgs("search", query, options);
-    return this.execJsonSearch(args);
+    return this.runJsonSearch("vsearch", query, options);
   }
   /** Keyword/BM25 search. */
   async search(query, options = {}) {
-    const args = this.buildSearchArgs("search", `lex:${query}`, options);
-    return this.execJsonSearch(args);
+    return this.runJsonSearch("tsearch", query, options);
+  }
+  /** Hybrid search with query expansion and reranking. */
+  async deepSearch(query, options = {}) {
+    return this.runJsonSearch("hsearch", query, options);
   }
   /** Retrieve a full document by file path or docid. */
   async get(fileOrDocid) {
-    return this.execQmd(["get", fileOrDocid]);
+    const result = await this.client.runCommand("get", { target: fileOrDocid });
+    return result.stdout;
   }
-  buildSearchArgs(command, query, options) {
-    const args = [command, query, "--json"];
-    if (options.limit) {
-      args.push("-n", String(options.limit));
-    }
-    if (options.minScore) {
-      args.push("--min-score", String(options.minScore));
-    }
-    if (options.collection) {
-      args.push("-c", options.collection);
-    }
-    return args;
-  }
-  async execJsonSearch(args) {
-    const output = await this.execQmd(args);
-    if (!output.trim())
-      return [];
-    try {
-      const parsed = JSON.parse(output);
-      if (Array.isArray(parsed))
-        return parsed;
-      return [];
-    } catch (e) {
-      return [];
-    }
-  }
-  execQmd(args) {
-    return new Promise((resolve, reject) => {
-      const cmd = `${this.qmdPath} ${args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`;
-      console.log("Executing QMD command:", cmd);
-      const env = {
-        ...process.env,
-        PATH: `/opt/homebrew/bin:/opt/homebrew/sbin:${process.env.PATH}`
-      };
-      (0, import_child_process.exec)(cmd, { timeout: 3e4, env }, (error, stdout, stderr) => {
-        if (error) {
-          const errorMsg = `QMD command failed: ${stderr || error.message}`;
-          console.error(errorMsg, { error, stderr, stdout });
-          reject(new Error(errorMsg));
-          return;
-        }
-        resolve(stdout);
-      });
+  /** Batch-retrieve documents matching a glob or comma-separated list. */
+  async multiGet(pattern, options = {}) {
+    const result = await this.client.runCommand("multi-get", {
+      pattern,
+      "--max-bytes": options.maxBytes,
+      "-l": options.lines
     });
+    return result.stdout;
+  }
+  async runJsonSearch(commandId, query, options) {
+    const result = await this.client.runCommand(commandId, {
+      query,
+      "-n": options.limit,
+      "--min-score": options.minScore,
+      "-c": options.collection ? [options.collection] : void 0,
+      [JSON_OUTPUT_VALUE_KEY]: true
+    });
+    if (Array.isArray(result.json))
+      return result.json;
+    return [];
+  }
+  /**
+   * `qmd collection list` prints a formatted block, not JSON:
+   *   name (qmd://name/)[ [excluded]]
+   *     Pattern:  <glob>
+   *     Files:    <n>
+   *     Updated:  <date>
+   * Extract just the name from each header line.
+   */
+  parseCollectionNames(output) {
+    const names = [];
+    for (const line of output.split("\n")) {
+      const match = /^(\S.+?) \(qmd:\/\//.exec(line);
+      if (match)
+        names.push(match[1]);
+    }
+    return names;
   }
 };
 
 // src/views/relatedNotesView.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/rag/retrieval.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // node_modules/bail/index.js
 function bail(error) {
@@ -911,7 +2312,7 @@ VFileMessage.prototype.ruleId = void 0;
 VFileMessage.prototype.source = void 0;
 
 // node_modules/vfile/lib/minpath.browser.js
-var minpath = { basename, dirname, extname, join, sep: "/" };
+var minpath = { basename, dirname, extname, join: join2, sep: "/" };
 function basename(path, extname2) {
   if (extname2 !== void 0 && typeof extname2 !== "string") {
     throw new TypeError('"ext" argument must be a string');
@@ -1028,7 +2429,7 @@ function extname(path) {
   }
   return path.slice(startDot, end);
 }
-function join(...segments) {
+function join2(...segments) {
   let index2 = -1;
   let joined;
   while (++index2 < segments.length) {
@@ -7197,7 +8598,7 @@ function formatSourceHeader(title, description, options) {
 async function extractNoteContent(filePath, app, settings) {
   var _a;
   const file = app.vault.getAbstractFileByPath(filePath);
-  if (!(file instanceof import_obsidian3.TFile))
+  if (!(file instanceof import_obsidian4.TFile))
     return null;
   const fullContent = await app.vault.read(file);
   const cache = app.metadataCache.getFileCache(file);
@@ -7289,7 +8690,7 @@ async function findSimilarNotes(title, qmdClient, app, filterLinked, topK, thres
       if (resolved) {
         for (const linkedPath of Object.keys(resolved)) {
           const linkedFile = app.vault.getAbstractFileByPath(linkedPath);
-          if (linkedFile instanceof import_obsidian3.TFile) {
+          if (linkedFile instanceof import_obsidian4.TFile) {
             linkedTitles.add(linkedFile.basename);
           }
         }
@@ -7297,7 +8698,7 @@ async function findSimilarNotes(title, qmdClient, app, filterLinked, topK, thres
       for (const [sourcePath, links] of Object.entries(app.metadataCache.resolvedLinks)) {
         if (activeFile.path in links) {
           const sourceFile = app.vault.getAbstractFileByPath(sourcePath);
-          if (sourceFile instanceof import_obsidian3.TFile) {
+          if (sourceFile instanceof import_obsidian4.TFile) {
             linkedTitles.add(sourceFile.basename);
           }
         }
@@ -7319,7 +8720,7 @@ async function findSimilarNotes(title, qmdClient, app, filterLinked, topK, thres
     let description = "";
     if (vaultPath) {
       const file = app.vault.getAbstractFileByPath(vaultPath);
-      if (file instanceof import_obsidian3.TFile) {
+      if (file instanceof import_obsidian4.TFile) {
         const cache = app.metadataCache.getFileCache(file);
         description = ((_a = cache == null ? void 0 : cache.frontmatter) == null ? void 0 : _a.Description) || "";
       }
@@ -7337,7 +8738,7 @@ async function findSimilarNotes(title, qmdClient, app, filterLinked, topK, thres
 }
 
 // src/views/components.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 var MAX_DROPDOWN_ITEMS = 20;
 function createSourcesEl(container, sources, app) {
   if (sources.length === 0)
@@ -7371,7 +8772,7 @@ function createSourcesEl(container, sources, app) {
   }
 }
 async function renderMarkdown(content3, container, app, component) {
-  await import_obsidian4.MarkdownRenderer.render(app, content3, container, "", component);
+  await import_obsidian5.MarkdownRenderer.render(app, content3, container, "", component);
 }
 function createChipSelector(container, items, placeholder, onChange) {
   const selected = /* @__PURE__ */ new Set();
@@ -7384,9 +8785,8 @@ function createChipSelector(container, items, placeholder, onChange) {
     cls: "pkm-rag-note-search"
   });
   const dropdown = container.createDiv({
-    cls: "pkm-rag-note-dropdown"
+    cls: "pkm-rag-note-dropdown pkm-rag-hidden"
   });
-  dropdown.style.display = "none";
   const renderChips = () => {
     chipsContainer.empty();
     for (const item of selected) {
@@ -7411,10 +8811,10 @@ function createChipSelector(container, items, placeholder, onChange) {
       (t) => !selected.has(t) && t.toLowerCase().includes(filter.toLowerCase())
     );
     if (filtered.length === 0) {
-      dropdown.style.display = "none";
+      dropdown.addClass("pkm-rag-hidden");
       return;
     }
-    dropdown.style.display = "block";
+    dropdown.removeClass("pkm-rag-hidden");
     for (const item of filtered.slice(0, MAX_DROPDOWN_ITEMS)) {
       const el = dropdown.createDiv({
         text: item,
@@ -7423,7 +8823,7 @@ function createChipSelector(container, items, placeholder, onChange) {
       el.addEventListener("click", () => {
         selected.add(item);
         searchInput.value = "";
-        dropdown.style.display = "none";
+        dropdown.addClass("pkm-rag-hidden");
         renderChips();
         onChange(Array.from(selected));
       });
@@ -7437,7 +8837,7 @@ function createChipSelector(container, items, placeholder, onChange) {
   });
   const onClickOutside = (e) => {
     if (!container.contains(e.target)) {
-      dropdown.style.display = "none";
+      dropdown.addClass("pkm-rag-hidden");
     }
   };
   document.addEventListener("click", onClickOutside);
@@ -7478,19 +8878,18 @@ function createNoteSelector(container, titles, placeholder, multiple, onChange) 
     cls: "pkm-rag-note-search"
   });
   const dropdown = wrapper.createDiv({
-    cls: "pkm-rag-note-dropdown"
+    cls: "pkm-rag-note-dropdown pkm-rag-hidden"
   });
-  dropdown.style.display = "none";
   const renderDropdown = (filter) => {
     dropdown.empty();
     const filtered = titles.filter(
       (t) => t.toLowerCase().includes(filter.toLowerCase())
     );
     if (filtered.length === 0) {
-      dropdown.style.display = "none";
+      dropdown.addClass("pkm-rag-hidden");
       return;
     }
-    dropdown.style.display = "block";
+    dropdown.removeClass("pkm-rag-hidden");
     for (const title of filtered.slice(0, MAX_DROPDOWN_ITEMS)) {
       const item = dropdown.createDiv({
         text: title,
@@ -7500,7 +8899,7 @@ function createNoteSelector(container, titles, placeholder, multiple, onChange) 
         selected.clear();
         selected.add(title);
         searchInput.value = title;
-        dropdown.style.display = "none";
+        dropdown.addClass("pkm-rag-hidden");
         onChange([title]);
       });
     }
@@ -7513,7 +8912,7 @@ function createNoteSelector(container, titles, placeholder, multiple, onChange) 
   });
   const onClickOutside = (e) => {
     if (!wrapper.contains(e.target)) {
-      dropdown.style.display = "none";
+      dropdown.addClass("pkm-rag-hidden");
     }
   };
   document.addEventListener("click", onClickOutside);
@@ -7525,7 +8924,7 @@ function createNoteSelector(container, titles, placeholder, multiple, onChange) 
 
 // src/views/relatedNotesView.ts
 var RELATED_NOTES_VIEW_TYPE = "pkm-rag-related-notes";
-var RelatedNotesView = class extends import_obsidian5.ItemView {
+var RelatedNotesView = class extends import_obsidian6.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.selectedCollection = "";
@@ -7668,10 +9067,10 @@ var RelatedNotesView = class extends import_obsidian5.ItemView {
 };
 
 // src/views/chatView.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/rag/modes.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // src/rag/prompts.ts
 var EXPLORE_SYSTEM_PROMPT = `You are a knowledge assistant that answers questions using ONLY the provided context from personal notes.
@@ -8081,7 +9480,7 @@ async function runUpdaterMode(title, qmdClient, ollamaClient, app, settings, onT
     };
   }
   const targetFile = app.vault.getAbstractFileByPath(targetNote.filePath);
-  if (!(targetFile instanceof import_obsidian6.TFile)) {
+  if (!(targetFile instanceof import_obsidian7.TFile)) {
     return {
       answer: `Cannot find file for "${title}".`,
       sources: []
@@ -8091,7 +9490,7 @@ async function runUpdaterMode(title, qmdClient, ollamaClient, app, settings, onT
   for (const [sourcePath, links] of Object.entries(app.metadataCache.resolvedLinks)) {
     if (targetNote.filePath in links) {
       const sourceFile = app.vault.getAbstractFileByPath(sourcePath);
-      if (sourceFile instanceof import_obsidian6.TFile) {
+      if (sourceFile instanceof import_obsidian7.TFile) {
         backlinkFiles.push(sourceFile);
       }
     }
@@ -8151,7 +9550,7 @@ ${blNote.content}`);
 
 // src/views/chatView.ts
 var CHAT_VIEW_TYPE = "pkm-rag-chat";
-var ChatView = class extends import_obsidian7.ItemView {
+var ChatView = class extends import_obsidian8.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.currentMode = "explore";
@@ -8664,30 +10063,379 @@ var ChatView = class extends import_obsidian7.ItemView {
   }
 };
 
+// src/views/cliConsoleView.ts
+var import_obsidian9 = require("obsidian");
+var CATEGORY_TABS = [
+  { id: "search", label: "Search" },
+  { id: "infra", label: "Setup / Infra" }
+];
+var CLI_CONSOLE_VIEW_TYPE = "pkm-rag-cli-console";
+var ConfirmRunModal = class extends import_obsidian9.Modal {
+  constructor(app, message, onConfirm) {
+    super(app);
+    this.message = message;
+    this.onConfirm = onConfirm;
+  }
+  onOpen() {
+    this.contentEl.createEl("p", { text: this.message });
+    const actions = this.contentEl.createDiv({ cls: "pkm-rag-console-confirm-actions" });
+    actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
+    const confirmBtn = actions.createEl("button", { text: "Run", cls: "mod-warning" });
+    confirmBtn.addEventListener("click", () => {
+      this.close();
+      this.onConfirm();
+    });
+  }
+};
+var CliConsoleView = class extends import_obsidian9.ItemView {
+  constructor(leaf, plugin) {
+    super(leaf);
+    this.clients = {};
+    this.currentTool = "qmd";
+    this.currentCategory = "search";
+    this.currentCommand = null;
+    this.values = {};
+    this.activeKill = null;
+    this.plugin = plugin;
+  }
+  getViewType() {
+    return CLI_CONSOLE_VIEW_TYPE;
+  }
+  getDisplayText() {
+    return "CLI console";
+  }
+  getIcon() {
+    return "square-terminal";
+  }
+  async onOpen() {
+    const container = this.contentEl;
+    container.empty();
+    container.addClass("pkm-rag-console");
+    const header = container.createDiv({ cls: "pkm-rag-console-header" });
+    const toolSelect = header.createEl("select", { cls: "pkm-rag-console-tool-select" });
+    for (const id of Object.keys(TOOLS)) {
+      toolSelect.createEl("option", { value: id, text: TOOLS[id].displayName });
+    }
+    toolSelect.value = this.currentTool;
+    toolSelect.addEventListener("change", () => {
+      this.currentTool = toolSelect.value;
+      this.currentCategory = "search";
+      this.currentCommand = null;
+      this.values = {};
+      this.renderCategoryTabs();
+      this.renderCommandList();
+      this.renderForm();
+    });
+    const body = container.createDiv({ cls: "pkm-rag-console-body" });
+    const pickerEl = body.createDiv({ cls: "pkm-rag-console-picker" });
+    this.categoryTabsEl = pickerEl.createDiv({ cls: "pkm-rag-console-category-tabs" });
+    this.commandSearchEl = pickerEl.createEl("input", {
+      type: "text",
+      placeholder: "Search commands...",
+      cls: "pkm-rag-note-search"
+    });
+    this.commandListEl = pickerEl.createDiv({ cls: "pkm-rag-console-command-list" });
+    this.commandSearchEl.addEventListener("input", () => this.renderCommandList());
+    this.formEl = body.createDiv({ cls: "pkm-rag-console-form" });
+    const actionsEl = container.createDiv({ cls: "pkm-rag-console-actions" });
+    this.runBtn = actionsEl.createEl("button", { text: "Run", cls: "mod-cta" });
+    this.cancelBtn = actionsEl.createEl("button", { text: "Cancel", cls: "pkm-rag-hidden" });
+    this.runBtn.addEventListener("click", () => this.handleRun());
+    this.cancelBtn.addEventListener("click", () => {
+      var _a;
+      return (_a = this.activeKill) == null ? void 0 : _a.call(this);
+    });
+    this.outputEl = container.createEl("pre", { cls: "pkm-rag-console-output" });
+    this.renderCategoryTabs();
+    this.renderCommandList();
+    this.renderForm();
+  }
+  async onClose() {
+    var _a;
+    (_a = this.activeKill) == null ? void 0 : _a.call(this);
+  }
+  getClient(id) {
+    const tool = TOOLS[id];
+    let client = this.clients[id];
+    if (!client) {
+      client = new GenericCliClient(
+        tool.binaryName,
+        tool.healthCheckCommand,
+        tool.schema,
+        this.plugin.settings.toolPaths[id] || void 0,
+        this.plugin.settings.commandTimeoutMs
+      );
+      this.clients[id] = client;
+    } else {
+      client.updatePath(this.plugin.settings.toolPaths[id] || void 0);
+    }
+    return client;
+  }
+  /** Segmented tabs splitting the rare, admin-y setup commands from the frequent search ones. */
+  renderCategoryTabs() {
+    this.categoryTabsEl.empty();
+    for (const tab of CATEGORY_TABS) {
+      const btn = this.categoryTabsEl.createEl("button", {
+        text: tab.label,
+        cls: "pkm-rag-console-category-tab" + (this.currentCategory === tab.id ? " is-active" : "")
+      });
+      btn.addEventListener("click", () => {
+        if (this.currentCategory === tab.id)
+          return;
+        this.currentCategory = tab.id;
+        this.currentCommand = null;
+        this.values = {};
+        this.renderCategoryTabs();
+        this.renderCommandList();
+        this.renderForm();
+      });
+    }
+  }
+  renderCommandList() {
+    var _a, _b, _c;
+    this.commandListEl.empty();
+    const client = this.getClient(this.currentTool);
+    const filter = this.commandSearchEl.value.toLowerCase();
+    const commands5 = client.listCommands().filter((c) => c.category === this.currentCategory).filter((c) => c.label.toLowerCase().includes(filter));
+    if (commands5.length === 0) {
+      const tabLabel = (_b = (_a = CATEGORY_TABS.find((t) => t.id === this.currentCategory)) == null ? void 0 : _a.label) != null ? _b : this.currentCategory;
+      this.commandListEl.createEl("p", {
+        text: `No ${tabLabel} commands available yet for this tool.`,
+        cls: "setting-item-description"
+      });
+      return;
+    }
+    for (const command of commands5) {
+      const selected = ((_c = this.currentCommand) == null ? void 0 : _c.id) === command.id;
+      const item = this.commandListEl.createDiv({
+        cls: "pkm-rag-dropdown-item" + (selected ? " pkm-rag-console-command-selected" : ""),
+        text: command.label
+      });
+      item.addEventListener("click", () => {
+        this.currentCommand = command;
+        this.values = {};
+        this.renderCommandList();
+        this.renderForm();
+      });
+    }
+  }
+  renderForm() {
+    this.formEl.empty();
+    this.outputEl.setText("");
+    const command = this.currentCommand;
+    if (!command) {
+      this.formEl.createEl("p", {
+        text: "Select a command to build its form.",
+        cls: "setting-item-description"
+      });
+      return;
+    }
+    if (command.description) {
+      this.formEl.createEl("p", { text: command.description, cls: "setting-item-description" });
+    }
+    for (const positional of command.positionals) {
+      this.renderPositionalField(positional);
+    }
+    for (const flag of command.flags) {
+      this.renderFlagField(flag);
+    }
+    if (command.jsonFlag) {
+      new import_obsidian9.Setting(this.formEl).setName("Output as JSON").addToggle(
+        (toggle) => toggle.setValue(!!this.values[JSON_OUTPUT_VALUE_KEY]).onChange((value) => {
+          this.values[JSON_OUTPUT_VALUE_KEY] = value;
+        })
+      );
+    }
+  }
+  renderPositionalField(positional) {
+    var _a, _b;
+    const label = positional.label + (positional.required ? " *" : "");
+    if (positional.type === "enum" && positional.enumValues) {
+      new import_obsidian9.Setting(this.formEl).setName(label).setDesc((_a = positional.description) != null ? _a : "").addDropdown((dd) => {
+        dd.addOption("", "\u2014");
+        for (const v of positional.enumValues)
+          dd.addOption(v, v);
+        dd.onChange((v) => {
+          this.values[positional.name] = v || void 0;
+        });
+      });
+      return;
+    }
+    new import_obsidian9.Setting(this.formEl).setName(label).setDesc((_b = positional.description) != null ? _b : "").addText(
+      (text3) => text3.onChange((v) => {
+        this.values[positional.name] = positional.type === "number" ? v === "" ? void 0 : Number(v) : v;
+      })
+    );
+  }
+  renderFlagField(flag) {
+    var _a, _b, _c;
+    if (flag.type === "boolean") {
+      new import_obsidian9.Setting(this.formEl).setName(flag.label).setDesc((_a = flag.description) != null ? _a : "").addToggle(
+        (toggle) => toggle.setValue(!!flag.default).onChange((v) => {
+          this.values[flag.flag] = v;
+        })
+      );
+      return;
+    }
+    if (flag.repeatable) {
+      this.renderChipField(flag);
+      return;
+    }
+    if (flag.type === "enum" && flag.enumValues) {
+      new import_obsidian9.Setting(this.formEl).setName(flag.label).setDesc((_b = flag.description) != null ? _b : "").addDropdown((dd) => {
+        dd.addOption("", "\u2014");
+        for (const v of flag.enumValues)
+          dd.addOption(v, v);
+        if (flag.default !== void 0)
+          dd.setValue(String(flag.default));
+        dd.onChange((v) => {
+          this.values[flag.flag] = v || void 0;
+        });
+      });
+      return;
+    }
+    new import_obsidian9.Setting(this.formEl).setName(flag.label).setDesc((_c = flag.description) != null ? _c : "").addText((text3) => {
+      if (flag.default !== void 0)
+        text3.setPlaceholder(String(flag.default));
+      text3.onChange((v) => {
+        this.values[flag.flag] = flag.type === "number" ? v === "" ? void 0 : Number(v) : v || void 0;
+      });
+    });
+  }
+  renderChipField(flag) {
+    const wrapper = this.formEl.createDiv({ cls: "pkm-rag-console-chip-field" });
+    wrapper.createEl("label", { text: flag.label, cls: "setting-item-name" });
+    if (flag.description) {
+      wrapper.createEl("p", { text: flag.description, cls: "setting-item-description" });
+    }
+    const items = [];
+    this.values[flag.flag] = items;
+    const chipsEl = wrapper.createDiv({ cls: "pkm-rag-chips-container" });
+    const renderChips = () => {
+      chipsEl.empty();
+      for (const item of items) {
+        const chip = chipsEl.createDiv({ cls: "pkm-rag-chip" });
+        chip.createSpan({ text: item });
+        const removeBtn = chip.createEl("button", { text: "\xD7", cls: "pkm-rag-chip-remove" });
+        removeBtn.addEventListener("click", () => {
+          const idx = items.indexOf(item);
+          if (idx >= 0)
+            items.splice(idx, 1);
+          renderChips();
+        });
+      }
+    };
+    const input = wrapper.createEl("input", { type: "text", placeholder: "Type a value, press Enter" });
+    if (this.currentTool === "qmd" && (flag.flag === "-c" || flag.flag === "--collection")) {
+      const listId = "pkm-rag-console-qmd-collections";
+      const datalist = wrapper.createEl("datalist", { attr: { id: listId } });
+      void this.plugin.qmdClient.getCollections().then((collections) => {
+        datalist.empty();
+        for (const c of collections)
+          datalist.createEl("option", { value: c });
+      });
+      input.setAttr("list", listId);
+    }
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && input.value.trim()) {
+        e.preventDefault();
+        items.push(input.value.trim());
+        input.value = "";
+        renderChips();
+      }
+    });
+    renderChips();
+  }
+  async handleRun() {
+    const command = this.currentCommand;
+    if (!command)
+      return;
+    for (const positional of command.positionals) {
+      if (positional.required && !this.values[positional.name]) {
+        new import_obsidian9.Notice(`"${positional.label}" is required.`);
+        return;
+      }
+    }
+    const run = () => this.executeCommand(command);
+    if (command.destructive) {
+      new ConfirmRunModal(
+        this.app,
+        `Run ${TOOLS[this.currentTool].binaryName} ${command.argvPath.join(" ")}? This may not be reversible.`,
+        run
+      ).open();
+    } else {
+      await run();
+    }
+  }
+  async executeCommand(command) {
+    const client = this.getClient(this.currentTool);
+    this.outputEl.setText("");
+    this.runBtn.disabled = true;
+    if (command.executionMode === "streaming") {
+      this.cancelBtn.removeClass("pkm-rag-hidden");
+      try {
+        const handle = await client.runCommandStreaming(
+          command.id,
+          this.values,
+          (chunk) => this.appendOutput(chunk),
+          (chunk) => this.appendOutput(chunk)
+        );
+        this.activeKill = handle.kill;
+        this.finishOutput(await handle.done);
+      } catch (error) {
+        this.outputEl.setText(`Error: ${error.message}`);
+      } finally {
+        this.activeKill = null;
+        this.cancelBtn.addClass("pkm-rag-hidden");
+        this.runBtn.disabled = false;
+      }
+      return;
+    }
+    try {
+      this.finishOutput(await client.runCommand(command.id, this.values));
+    } catch (error) {
+      this.outputEl.setText(`Error: ${error.message}`);
+    } finally {
+      this.runBtn.disabled = false;
+    }
+  }
+  appendOutput(chunk) {
+    this.outputEl.setText(this.outputEl.getText() + chunk);
+  }
+  finishOutput(result) {
+    if (result.json !== void 0) {
+      this.outputEl.setText(JSON.stringify(result.json, null, 2));
+      return;
+    }
+    const parts = [result.stdout, result.stderr].filter(Boolean);
+    this.outputEl.setText(parts.join("\n---stderr---\n") || `(no output, exit code ${result.code})`);
+  }
+};
+
 // src/main.ts
-var PkmRagPlugin = class extends import_obsidian8.Plugin {
+var PkmRagPlugin = class extends import_obsidian10.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
-    this.qmdClient = new QmdClient(DEFAULT_SETTINGS.qmdPath);
+    this.qmdClient = new QmdClient(DEFAULT_SETTINGS.toolPaths.qmd);
     this.ollamaClient = new OllamaChatClient(
       DEFAULT_SETTINGS.ollamaUrl,
       DEFAULT_SETTINGS.chatModel
     );
+    /** In-memory (not persisted) last-known status per tool, read by settings tab / console. */
+    this.toolStatus = {};
   }
   async onload() {
     await this.loadSettings();
-    this.qmdClient = new QmdClient(this.settings.qmdPath);
+    this.qmdClient = new QmdClient(this.settings.toolPaths.qmd);
     this.ollamaClient = new OllamaChatClient(
       this.settings.ollamaUrl,
       this.settings.chatModel
     );
-    const qmdAvailable = await this.qmdClient.isAvailable();
-    if (!qmdAvailable) {
-      new import_obsidian8.Notice("QMD is not available. Please install QMD and configure the path in settings.");
-    }
+    void this.detectAllTools();
     this.registerView(RELATED_NOTES_VIEW_TYPE, (leaf) => new RelatedNotesView(leaf, this));
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
+    this.registerView(CLI_CONSOLE_VIEW_TYPE, (leaf) => new CliConsoleView(leaf, this));
     this.addSettingTab(new PkmRagSettingTab(this.app, this));
     this.addCommand({
       id: "show-related",
@@ -8699,19 +10447,51 @@ var PkmRagPlugin = class extends import_obsidian8.Plugin {
       name: "Open chat",
       callback: () => this.activateView(CHAT_VIEW_TYPE)
     });
+    this.addCommand({
+      id: "open-setup-wizard",
+      name: "Open PKM tools setup wizard",
+      callback: () => new SetupWizardModal(this.app, this).open()
+    });
+    this.addCommand({
+      id: "open-cli-console",
+      name: "Open CLI console",
+      callback: () => this.activateView(CLI_CONSOLE_VIEW_TYPE)
+    });
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
         this.refreshRelatedNotesView();
       })
     );
+    if (!this.settings.setupWizardShown) {
+      this.settings.setupWizardShown = true;
+      await this.saveSettings();
+      new SetupWizardModal(this.app, this).open();
+    } else {
+      const qmdAvailable = await this.qmdClient.isAvailable();
+      if (!qmdAvailable) {
+        new import_obsidian10.Notice("QMD is not available. Please install QMD and configure the path in settings.");
+      }
+    }
+  }
+  async detectAllTools() {
+    await Promise.all(
+      Object.keys(TOOLS).map(async (id) => {
+        const tool = TOOLS[id];
+        this.toolStatus[id] = await detectBinary(
+          tool.binaryName,
+          tool.healthCheckCommand,
+          this.settings.toolPaths[id] || void 0
+        );
+      })
+    );
   }
   async loadSettings() {
     const loaded = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+    this.settings = migrateLegacySettings(Object.assign({}, DEFAULT_SETTINGS, loaded));
   }
   async saveSettings() {
     await this.saveData(this.settings);
-    this.qmdClient.updatePath(this.settings.qmdPath);
+    this.qmdClient.updatePath(this.settings.toolPaths.qmd);
     this.ollamaClient = new OllamaChatClient(
       this.settings.ollamaUrl,
       this.settings.chatModel

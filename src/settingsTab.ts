@@ -1,6 +1,10 @@
 import { App, PluginSettingTab, Setting, Notice } from "obsidian";
 import type PkmRagPlugin from "./main";
 import { OllamaChatClient } from "./ollama/chatClient";
+import { TOOLS } from "./cli/toolRegistry";
+import { detectBinary } from "./cli/binaryResolver";
+import { DetectResult, ToolId } from "./cli/types";
+import { SetupWizardModal } from "./views/setupWizardModal";
 
 export class PkmRagSettingTab extends PluginSettingTab {
 	plugin: PkmRagPlugin;
@@ -33,36 +37,78 @@ export class PkmRagSettingTab extends PluginSettingTab {
 			);
 	}
 
+	private describeStatus(result: DetectResult): string {
+		switch (result.status) {
+			case "healthy":
+				return "Detected";
+			case "unhealthy":
+				return `Not responding${result.message ? ` (${result.message})` : ""}`;
+			case "not-found":
+				return "Not found";
+		}
+	}
+
+	/** Renders one tool's status badge, path override field, and a "Test" button. */
+	private renderToolSetting(containerEl: HTMLElement, id: ToolId): void {
+		const tool = TOOLS[id];
+		const wrapper = containerEl.createDiv({ cls: "pkm-rag-tool-setting" });
+
+		const statusEl = wrapper.createDiv({ cls: "pkm-rag-tool-status" });
+		statusEl.setText("Status: unknown");
+
+		this.addTextSetting(
+			wrapper,
+			tool.displayName,
+			`Path to the ${tool.binaryName} binary (leave blank to auto-detect)`,
+			"(auto-detected)",
+			() => this.plugin.settings.toolPaths[id] ?? "",
+			(v) => {
+				this.plugin.settings.toolPaths[id] = v;
+			}
+		);
+
+		new Setting(wrapper)
+			.setName(`Test ${tool.binaryName} connection`)
+			.setDesc(`Check if ${tool.binaryName} is reachable`)
+			.addButton((btn) =>
+				btn.setButtonText("Test").onClick(async () => {
+					const result = await detectBinary(
+						tool.binaryName,
+						tool.healthCheckCommand,
+						this.plugin.settings.toolPaths[id] || undefined
+					);
+					const label = this.describeStatus(result);
+					statusEl.setText(`Status: ${label}`);
+					new Notice(`${tool.displayName}: ${label}`);
+				})
+			)
+			.addButton((btn) =>
+				btn.setButtonText("Setup wizard").onClick(() => {
+					new SetupWizardModal(this.app, this.plugin).open();
+				})
+			);
+	}
+
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		// --- QMD ---
-		containerEl.createEl("h3", { text: "QMD" });
+		// --- Tools ---
+		containerEl.createEl("h3", { text: "Tools" });
+		containerEl.createEl("p", {
+			text: "qmd, qimg, qnode, and qvoid are separate CLI tools this plugin drives. Leave a path blank to auto-detect it.",
+			cls: "setting-item-description",
+		});
 
-		this.addTextSetting(containerEl, "QMD path", "Path to the qmd binary",
-			"qmd",
-			() => this.plugin.settings.qmdPath,
-			(v) => { this.plugin.settings.qmdPath = v; });
+		for (const id of Object.keys(TOOLS) as ToolId[]) {
+			this.renderToolSetting(containerEl, id);
+		}
 
+		containerEl.createEl("h4", { text: "QMD (RAG chat)" });
 		this.addTextSetting(containerEl, "Default collection", "QMD collection to search by default (leave empty for all)",
 			"",
 			() => this.plugin.settings.defaultCollection,
 			(v) => { this.plugin.settings.defaultCollection = v; });
-
-		new Setting(containerEl)
-			.setName("Test QMD connection")
-			.setDesc("Check if QMD is reachable")
-			.addButton((btn) =>
-				btn.setButtonText("Test").onClick(async () => {
-					const ok = await this.plugin.qmdClient.isAvailable();
-					new Notice(
-						ok
-							? "QMD is connected and available."
-							: "Cannot reach QMD. Is it installed?"
-					);
-				})
-			);
 
 		// --- Ollama Connection ---
 		containerEl.createEl("h3", { text: "Ollama (Chat)" });
