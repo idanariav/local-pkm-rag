@@ -585,15 +585,6 @@ var commands2 = [
     executionMode: "streaming"
   },
   {
-    id: "get",
-    argvPath: ["get"],
-    category: "search",
-    label: "Get image metadata",
-    positionals: [{ name: "target", type: "string", label: "Path or #docid", required: true }],
-    flags: [],
-    executionMode: "buffered"
-  },
-  {
     id: "tsearch",
     argvPath: ["tsearch"],
     category: "search",
@@ -622,6 +613,15 @@ var commands2 = [
     flags: sharedSearchFlags2(),
     executionMode: "buffered",
     jsonFlag: "--json"
+  },
+  {
+    id: "get",
+    argvPath: ["get"],
+    category: "search",
+    label: "Get image metadata",
+    positionals: [{ name: "target", type: "string", label: "Path or #docid", required: true }],
+    flags: [],
+    executionMode: "buffered"
   },
   {
     id: "status",
@@ -1953,6 +1953,39 @@ var GenericCliClient = class {
   }
 };
 
+// src/cli/collectionNames.ts
+function parseCollectionNames(toolId, output) {
+  switch (toolId) {
+    case "qmd":
+      return parseQmdCollectionNames(output);
+    case "qimg":
+      return parseQimgCollectionNames(output);
+    default:
+      return [];
+  }
+}
+function parseQmdCollectionNames(output) {
+  const names = [];
+  for (const line of output.split("\n")) {
+    const match = /^(\S.+?) \(qmd:\/\//.exec(line);
+    if (match)
+      names.push(match[1]);
+  }
+  return names;
+}
+function parseQimgCollectionNames(output) {
+  var _a;
+  const names = [];
+  for (const line of output.split("\n")) {
+    if (/^\s/.test(line))
+      continue;
+    const name = (_a = line.split("	")[0]) == null ? void 0 : _a.trim();
+    if (name)
+      names.push(name);
+  }
+  return names;
+}
+
 // src/cli/tools/qmdClient.ts
 var QmdClient = class {
   constructor(qmdPath) {
@@ -1974,7 +2007,7 @@ var QmdClient = class {
   async getCollections() {
     try {
       const result = await this.client.runCommand("collection.list");
-      return this.parseCollectionNames(result.stdout);
+      return parseCollectionNames("qmd", result.stdout);
     } catch (e) {
       return [];
     }
@@ -2016,23 +2049,6 @@ var QmdClient = class {
     if (Array.isArray(result.json))
       return result.json;
     return [];
-  }
-  /**
-   * `qmd collection list` prints a formatted block, not JSON:
-   *   name (qmd://name/)[ [excluded]]
-   *     Pattern:  <glob>
-   *     Files:    <n>
-   *     Updated:  <date>
-   * Extract just the name from each header line.
-   */
-  parseCollectionNames(output) {
-    const names = [];
-    for (const line of output.split("\n")) {
-      const match = /^(\S.+?) \(qmd:\/\//.exec(line);
-      if (match)
-        names.push(match[1]);
-    }
-    return names;
   }
 };
 
@@ -10065,6 +10081,96 @@ var ChatView = class extends import_obsidian8.ItemView {
 
 // src/views/cliConsoleView.ts
 var import_obsidian9 = require("obsidian");
+
+// src/cli/resultNormalizer.ts
+function normalizeResults(toolId, json) {
+  if (!Array.isArray(json))
+    return null;
+  const normalizer = NORMALIZERS[toolId];
+  if (!normalizer)
+    return null;
+  const results = json.map(normalizer).filter((r) => r !== null);
+  return results.length > 0 ? results : null;
+}
+function asRecord(item) {
+  return typeof item === "object" && item !== null ? item : null;
+}
+function stripSnippetHunkHeader(snippet) {
+  return snippet.replace(/^@@[^@]*@@\s*\([^)]*\)\n?/, "").trim();
+}
+function normalizeQmdResult(item) {
+  const r = asRecord(item);
+  if (!r || typeof r.file !== "string")
+    return null;
+  const rawSubtitle = typeof r.snippet === "string" ? r.snippet : typeof r.context === "string" ? r.context : void 0;
+  return {
+    title: typeof r.title === "string" && r.title ? r.title : r.file,
+    fileRef: r.file,
+    subtitle: rawSubtitle ? stripSnippetHunkHeader(rawSubtitle) : void 0,
+    score: typeof r.score === "number" ? r.score : void 0
+  };
+}
+function normalizeQimgResult(item) {
+  const r = asRecord(item);
+  if (!r || typeof r.path !== "string")
+    return null;
+  return {
+    title: r.path,
+    fileRef: r.path,
+    subtitle: typeof r.caption === "string" && r.caption ? r.caption : typeof r.collection === "string" ? `Collection: ${r.collection}` : void 0,
+    score: typeof r.score === "number" ? r.score : void 0
+  };
+}
+var NORMALIZERS = {
+  qmd: normalizeQmdResult,
+  qimg: normalizeQimgResult
+};
+
+// src/views/fileLink.ts
+function resolveVaultFile(app, rawRef) {
+  const allFiles = app.vault.getFiles();
+  for (const file of allFiles) {
+    if (rawRef.endsWith(file.path) || file.path.endsWith(rawRef) || file.path === rawRef) {
+      return file;
+    }
+  }
+  const basename2 = rawRef.split("/").pop() || rawRef;
+  for (const file of allFiles) {
+    if (file.name === basename2)
+      return file;
+  }
+  return null;
+}
+function renderFileLink(container, app, hoverParent, hoverSource, rawRef, displayText) {
+  const file = resolveVaultFile(app, rawRef);
+  if (!file) {
+    container.createSpan({ text: displayText, cls: "pkm-rag-console-result-unresolved" });
+    return;
+  }
+  const link = container.createEl("a", {
+    text: displayText,
+    cls: "pkm-rag-console-result-link internal-link",
+    href: file.path
+  });
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    void app.workspace.openLinkText(file.path, "");
+  });
+  link.addEventListener("mouseover", (event) => {
+    app.workspace.trigger("hover-link", {
+      event,
+      source: hoverSource,
+      hoverParent,
+      targetEl: link,
+      linktext: file.path,
+      sourcePath: file.path
+    });
+  });
+}
+
+// src/views/cliConsoleView.ts
+var CLI_CONSOLE_HOVER_SOURCE = "pkm-rag-cli-console";
+var COLLECTION_SUGGESTIONS_SUPPORTED = ["qmd", "qimg"];
 var CATEGORY_TABS = [
   { id: "search", label: "Search" },
   { id: "infra", label: "Setup / Infra" }
@@ -10096,6 +10202,7 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
     this.currentCommand = null;
     this.values = {};
     this.activeKill = null;
+    this.hoverPopover = null;
     this.plugin = plugin;
   }
   getViewType() {
@@ -10145,6 +10252,7 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       var _a;
       return (_a = this.activeKill) == null ? void 0 : _a.call(this);
     });
+    this.resultsEl = container.createDiv({ cls: "pkm-rag-console-results pkm-rag-hidden" });
     this.outputEl = container.createEl("pre", { cls: "pkm-rag-console-output" });
     this.renderCategoryTabs();
     this.renderCommandList();
@@ -10221,7 +10329,6 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
   }
   renderForm() {
     this.formEl.empty();
-    this.outputEl.setText("");
     const command = this.currentCommand;
     if (!command) {
       this.formEl.createEl("p", {
@@ -10234,12 +10341,25 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       this.formEl.createEl("p", { text: command.description, cls: "setting-item-description" });
     }
     for (const positional of command.positionals) {
-      this.renderPositionalField(positional);
+      this.renderPositionalField(positional, this.formEl);
     }
-    for (const flag of command.flags) {
-      this.renderFlagField(flag);
+    const requiredFlags = command.flags.filter((f) => f.required);
+    const optionalFlags = command.flags.filter((f) => !f.required);
+    for (const flag of requiredFlags) {
+      this.renderFlagField(flag, this.formEl);
+    }
+    if (optionalFlags.length > 0) {
+      const details = this.formEl.createEl("details", { cls: "pkm-rag-console-advanced" });
+      details.createEl("summary", { text: `Advanced (${optionalFlags.length})` });
+      const advancedBody = details.createDiv();
+      for (const flag of optionalFlags) {
+        this.renderFlagField(flag, advancedBody);
+      }
     }
     if (command.jsonFlag) {
+      if (this.values[JSON_OUTPUT_VALUE_KEY] === void 0) {
+        this.values[JSON_OUTPUT_VALUE_KEY] = true;
+      }
       new import_obsidian9.Setting(this.formEl).setName("Output as JSON").addToggle(
         (toggle) => toggle.setValue(!!this.values[JSON_OUTPUT_VALUE_KEY]).onChange((value) => {
           this.values[JSON_OUTPUT_VALUE_KEY] = value;
@@ -10247,11 +10367,11 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       );
     }
   }
-  renderPositionalField(positional) {
+  renderPositionalField(positional, container) {
     var _a, _b;
     const label = positional.label + (positional.required ? " *" : "");
     if (positional.type === "enum" && positional.enumValues) {
-      new import_obsidian9.Setting(this.formEl).setName(label).setDesc((_a = positional.description) != null ? _a : "").addDropdown((dd) => {
+      new import_obsidian9.Setting(container).setName(label).setDesc((_a = positional.description) != null ? _a : "").addDropdown((dd) => {
         dd.addOption("", "\u2014");
         for (const v of positional.enumValues)
           dd.addOption(v, v);
@@ -10261,28 +10381,32 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       });
       return;
     }
-    new import_obsidian9.Setting(this.formEl).setName(label).setDesc((_b = positional.description) != null ? _b : "").addText(
+    new import_obsidian9.Setting(container).setName(label).setDesc((_b = positional.description) != null ? _b : "").addText(
       (text3) => text3.onChange((v) => {
         this.values[positional.name] = positional.type === "number" ? v === "" ? void 0 : Number(v) : v;
       })
     );
   }
-  renderFlagField(flag) {
+  renderFlagField(flag, container) {
     var _a, _b, _c;
     if (flag.type === "boolean") {
-      new import_obsidian9.Setting(this.formEl).setName(flag.label).setDesc((_a = flag.description) != null ? _a : "").addToggle(
-        (toggle) => toggle.setValue(!!flag.default).onChange((v) => {
+      const initial = !!flag.default;
+      this.values[flag.flag] = initial;
+      new import_obsidian9.Setting(container).setName(flag.label).setDesc((_a = flag.description) != null ? _a : "").addToggle(
+        (toggle) => toggle.setValue(initial).onChange((v) => {
           this.values[flag.flag] = v;
         })
       );
       return;
     }
     if (flag.repeatable) {
-      this.renderChipField(flag);
+      this.renderChipField(flag, container);
       return;
     }
     if (flag.type === "enum" && flag.enumValues) {
-      new import_obsidian9.Setting(this.formEl).setName(flag.label).setDesc((_b = flag.description) != null ? _b : "").addDropdown((dd) => {
+      if (flag.default !== void 0)
+        this.values[flag.flag] = String(flag.default);
+      new import_obsidian9.Setting(container).setName(flag.label).setDesc((_b = flag.description) != null ? _b : "").addDropdown((dd) => {
         dd.addOption("", "\u2014");
         for (const v of flag.enumValues)
           dd.addOption(v, v);
@@ -10294,16 +10418,40 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       });
       return;
     }
-    new import_obsidian9.Setting(this.formEl).setName(flag.label).setDesc((_c = flag.description) != null ? _c : "").addText((text3) => {
+    if (flag.default !== void 0) {
+      this.values[flag.flag] = flag.type === "number" ? Number(flag.default) : flag.default;
+    }
+    new import_obsidian9.Setting(container).setName(flag.label).setDesc((_c = flag.description) != null ? _c : "").addText((text3) => {
       if (flag.default !== void 0)
-        text3.setPlaceholder(String(flag.default));
+        text3.setValue(String(flag.default));
       text3.onChange((v) => {
         this.values[flag.flag] = flag.type === "number" ? v === "" ? void 0 : Number(v) : v || void 0;
       });
+      this.attachCollectionSuggestions(text3.inputEl, container, flag);
     });
   }
-  renderChipField(flag) {
-    const wrapper = this.formEl.createDiv({ cls: "pkm-rag-console-chip-field" });
+  /** For collection-like flags on tools we know how to parse `collection list` output for,
+   *  attach a live datalist of real collection names instead of leaving the field blank/freeform. */
+  attachCollectionSuggestions(input, wrapper, flag) {
+    if (flag.flag !== "-c" && flag.flag !== "--collection")
+      return;
+    if (!COLLECTION_SUGGESTIONS_SUPPORTED.includes(this.currentTool))
+      return;
+    const listId = `pkm-rag-console-collections-${this.currentTool}`;
+    const datalist = wrapper.createEl("datalist", { attr: { id: listId } });
+    const tool = this.currentTool;
+    const client = this.getClient(tool);
+    void client.runCommand("collection.list").then((result) => {
+      const names = parseCollectionNames(tool, result.stdout);
+      datalist.empty();
+      for (const name of names)
+        datalist.createEl("option", { value: name });
+    }).catch(() => {
+    });
+    input.setAttr("list", listId);
+  }
+  renderChipField(flag, container) {
+    const wrapper = container.createDiv({ cls: "pkm-rag-console-chip-field" });
     wrapper.createEl("label", { text: flag.label, cls: "setting-item-name" });
     if (flag.description) {
       wrapper.createEl("p", { text: flag.description, cls: "setting-item-description" });
@@ -10326,16 +10474,7 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       }
     };
     const input = wrapper.createEl("input", { type: "text", placeholder: "Type a value, press Enter" });
-    if (this.currentTool === "qmd" && (flag.flag === "-c" || flag.flag === "--collection")) {
-      const listId = "pkm-rag-console-qmd-collections";
-      const datalist = wrapper.createEl("datalist", { attr: { id: listId } });
-      void this.plugin.qmdClient.getCollections().then((collections) => {
-        datalist.empty();
-        for (const c of collections)
-          datalist.createEl("option", { value: c });
-      });
-      input.setAttr("list", listId);
-    }
+    this.attachCollectionSuggestions(input, wrapper, flag);
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && input.value.trim()) {
         e.preventDefault();
@@ -10370,6 +10509,9 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
   async executeCommand(command) {
     const client = this.getClient(this.currentTool);
     this.outputEl.setText("");
+    this.outputEl.removeClass("pkm-rag-hidden");
+    this.resultsEl.empty();
+    this.resultsEl.addClass("pkm-rag-hidden");
     this.runBtn.disabled = true;
     if (command.executionMode === "streaming") {
       this.cancelBtn.removeClass("pkm-rag-hidden");
@@ -10404,11 +10546,35 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
   }
   finishOutput(result) {
     if (result.json !== void 0) {
+      const normalized = normalizeResults(this.currentTool, result.json);
+      if (normalized) {
+        this.renderResultCards(normalized);
+        return;
+      }
       this.outputEl.setText(JSON.stringify(result.json, null, 2));
       return;
     }
     const parts = [result.stdout, result.stderr].filter(Boolean);
     this.outputEl.setText(parts.join("\n---stderr---\n") || `(no output, exit code ${result.code})`);
+  }
+  /** Renders search-style results as clickable cards with native Obsidian hover-preview
+   *  links, instead of a raw JSON dump — the file link behaves exactly like a normal
+   *  markdown wikilink (click to open, hover to preview, images included). */
+  renderResultCards(results) {
+    this.outputEl.addClass("pkm-rag-hidden");
+    this.resultsEl.removeClass("pkm-rag-hidden");
+    this.resultsEl.empty();
+    for (const result of results) {
+      const card = this.resultsEl.createDiv({ cls: "pkm-rag-console-result-card" });
+      const titleRow = card.createDiv({ cls: "pkm-rag-console-result-title-row" });
+      renderFileLink(titleRow, this.app, this, CLI_CONSOLE_HOVER_SOURCE, result.fileRef, result.title);
+      if (result.score !== void 0) {
+        titleRow.createSpan({ text: result.score.toFixed(2), cls: "pkm-rag-console-result-score" });
+      }
+      if (result.subtitle) {
+        card.createDiv({ text: result.subtitle, cls: "pkm-rag-console-result-subtitle" });
+      }
+    }
   }
 };
 
@@ -10436,6 +10602,10 @@ var PkmRagPlugin = class extends import_obsidian10.Plugin {
     this.registerView(RELATED_NOTES_VIEW_TYPE, (leaf) => new RelatedNotesView(leaf, this));
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
     this.registerView(CLI_CONSOLE_VIEW_TYPE, (leaf) => new CliConsoleView(leaf, this));
+    this.registerHoverLinkSource(CLI_CONSOLE_HOVER_SOURCE, {
+      display: "PKM RAG CLI Console",
+      defaultMod: false
+    });
     this.addSettingTab(new PkmRagSettingTab(this.app, this));
     this.addCommand({
       id: "show-related",

@@ -1,8 +1,17 @@
-import { App, ItemView, WorkspaceLeaf, Setting, Notice, Modal } from "obsidian";
+import { App, HoverParent, HoverPopover, ItemView, WorkspaceLeaf, Setting, Notice, Modal } from "obsidian";
 import type PkmRagPlugin from "../main";
 import { TOOLS } from "../cli/toolRegistry";
 import { GenericCliClient, JSON_OUTPUT_VALUE_KEY, CommandResult } from "../cli/genericClient";
 import { CommandCategory, CommandNode, FlagSpec, PositionalArgSpec, ToolId } from "../cli/types";
+import { parseCollectionNames } from "../cli/collectionNames";
+import { normalizeResults, NormalizedResult } from "../cli/resultNormalizer";
+import { renderFileLink } from "./fileLink";
+
+export const CLI_CONSOLE_HOVER_SOURCE = "pkm-rag-cli-console";
+
+/** Tools whose `collection list` output we know how to parse into plain names for
+ *  live chip suggestions. Extend as more tools get this treatment. */
+const COLLECTION_SUGGESTIONS_SUPPORTED: ToolId[] = ["qmd", "qimg"];
 
 const CATEGORY_TABS: { id: CommandCategory; label: string }[] = [
 	{ id: "search", label: "Search" },
@@ -31,7 +40,7 @@ class ConfirmRunModal extends Modal {
 /** Schema-driven generic command console: pick a tool, pick a command, fill in a
  *  generated form, run it. The same plumbing (GenericCliClient + per-tool schema)
  *  works for all four tools; only qmd has a fully populated schema this round. */
-export class CliConsoleView extends ItemView {
+export class CliConsoleView extends ItemView implements HoverParent {
 	private readonly plugin: PkmRagPlugin;
 	private readonly clients: Partial<Record<ToolId, GenericCliClient>> = {};
 	private currentTool: ToolId = "qmd";
@@ -39,9 +48,11 @@ export class CliConsoleView extends ItemView {
 	private currentCommand: CommandNode | null = null;
 	private values: Record<string, unknown> = {};
 	private activeKill: (() => void) | null = null;
+	hoverPopover: HoverPopover | null = null;
 
 	private formEl!: HTMLElement;
 	private outputEl!: HTMLElement;
+	private resultsEl!: HTMLElement;
 	private runBtn!: HTMLButtonElement;
 	private cancelBtn!: HTMLButtonElement;
 	private commandListEl!: HTMLElement;
@@ -106,6 +117,7 @@ export class CliConsoleView extends ItemView {
 		this.runBtn.addEventListener("click", () => this.handleRun());
 		this.cancelBtn.addEventListener("click", () => this.activeKill?.());
 
+		this.resultsEl = container.createDiv({ cls: "pkm-rag-console-results pkm-rag-hidden" });
 		this.outputEl = container.createEl("pre", { cls: "pkm-rag-console-output" });
 
 		this.renderCategoryTabs();
@@ -190,7 +202,6 @@ export class CliConsoleView extends ItemView {
 
 	private renderForm(): void {
 		this.formEl.empty();
-		this.outputEl.setText("");
 
 		const command = this.currentCommand;
 		if (!command) {
@@ -205,13 +216,32 @@ export class CliConsoleView extends ItemView {
 			this.formEl.createEl("p", { text: command.description, cls: "setting-item-description" });
 		}
 
+		// Positionals are the command's primary arguments — always visible, never tucked away.
 		for (const positional of command.positionals) {
-			this.renderPositionalField(positional);
+			this.renderPositionalField(positional, this.formEl);
 		}
-		for (const flag of command.flags) {
-			this.renderFlagField(flag);
+
+		const requiredFlags = command.flags.filter((f) => f.required);
+		const optionalFlags = command.flags.filter((f) => !f.required);
+
+		for (const flag of requiredFlags) {
+			this.renderFlagField(flag, this.formEl);
 		}
+
+		if (optionalFlags.length > 0) {
+			const details = this.formEl.createEl("details", { cls: "pkm-rag-console-advanced" });
+			details.createEl("summary", { text: `Advanced (${optionalFlags.length})` });
+			const advancedBody = details.createDiv();
+			for (const flag of optionalFlags) {
+				this.renderFlagField(flag, advancedBody);
+			}
+		}
+
 		if (command.jsonFlag) {
+			// Defaults on: JSON is what powers the pretty results list below.
+			if (this.values[JSON_OUTPUT_VALUE_KEY] === undefined) {
+				this.values[JSON_OUTPUT_VALUE_KEY] = true;
+			}
 			new Setting(this.formEl).setName("Output as JSON").addToggle((toggle) =>
 				toggle.setValue(!!this.values[JSON_OUTPUT_VALUE_KEY]).onChange((value) => {
 					this.values[JSON_OUTPUT_VALUE_KEY] = value;
@@ -220,11 +250,11 @@ export class CliConsoleView extends ItemView {
 		}
 	}
 
-	private renderPositionalField(positional: PositionalArgSpec): void {
+	private renderPositionalField(positional: PositionalArgSpec, container: HTMLElement): void {
 		const label = positional.label + (positional.required ? " *" : "");
 
 		if (positional.type === "enum" && positional.enumValues) {
-			new Setting(this.formEl).setName(label).setDesc(positional.description ?? "").addDropdown((dd) => {
+			new Setting(container).setName(label).setDesc(positional.description ?? "").addDropdown((dd) => {
 				dd.addOption("", "—");
 				for (const v of positional.enumValues as string[]) dd.addOption(v, v);
 				dd.onChange((v) => {
@@ -234,17 +264,19 @@ export class CliConsoleView extends ItemView {
 			return;
 		}
 
-		new Setting(this.formEl).setName(label).setDesc(positional.description ?? "").addText((text) =>
+		new Setting(container).setName(label).setDesc(positional.description ?? "").addText((text) =>
 			text.onChange((v) => {
 				this.values[positional.name] = positional.type === "number" ? (v === "" ? undefined : Number(v)) : v;
 			})
 		);
 	}
 
-	private renderFlagField(flag: FlagSpec): void {
+	private renderFlagField(flag: FlagSpec, container: HTMLElement): void {
 		if (flag.type === "boolean") {
-			new Setting(this.formEl).setName(flag.label).setDesc(flag.description ?? "").addToggle((toggle) =>
-				toggle.setValue(!!flag.default).onChange((v) => {
+			const initial = !!flag.default;
+			this.values[flag.flag] = initial;
+			new Setting(container).setName(flag.label).setDesc(flag.description ?? "").addToggle((toggle) =>
+				toggle.setValue(initial).onChange((v) => {
 					this.values[flag.flag] = v;
 				})
 			);
@@ -252,12 +284,13 @@ export class CliConsoleView extends ItemView {
 		}
 
 		if (flag.repeatable) {
-			this.renderChipField(flag);
+			this.renderChipField(flag, container);
 			return;
 		}
 
 		if (flag.type === "enum" && flag.enumValues) {
-			new Setting(this.formEl).setName(flag.label).setDesc(flag.description ?? "").addDropdown((dd) => {
+			if (flag.default !== undefined) this.values[flag.flag] = String(flag.default);
+			new Setting(container).setName(flag.label).setDesc(flag.description ?? "").addDropdown((dd) => {
 				dd.addOption("", "—");
 				for (const v of flag.enumValues as string[]) dd.addOption(v, v);
 				if (flag.default !== undefined) dd.setValue(String(flag.default));
@@ -268,16 +301,43 @@ export class CliConsoleView extends ItemView {
 			return;
 		}
 
-		new Setting(this.formEl).setName(flag.label).setDesc(flag.description ?? "").addText((text) => {
-			if (flag.default !== undefined) text.setPlaceholder(String(flag.default));
+		if (flag.default !== undefined) {
+			this.values[flag.flag] = flag.type === "number" ? Number(flag.default) : flag.default;
+		}
+		new Setting(container).setName(flag.label).setDesc(flag.description ?? "").addText((text) => {
+			if (flag.default !== undefined) text.setValue(String(flag.default));
 			text.onChange((v) => {
 				this.values[flag.flag] = flag.type === "number" ? (v === "" ? undefined : Number(v)) : v || undefined;
 			});
+			this.attachCollectionSuggestions(text.inputEl, container, flag);
 		});
 	}
 
-	private renderChipField(flag: FlagSpec): void {
-		const wrapper = this.formEl.createDiv({ cls: "pkm-rag-console-chip-field" });
+	/** For collection-like flags on tools we know how to parse `collection list` output for,
+	 *  attach a live datalist of real collection names instead of leaving the field blank/freeform. */
+	private attachCollectionSuggestions(input: HTMLInputElement, wrapper: HTMLElement, flag: FlagSpec): void {
+		if (flag.flag !== "-c" && flag.flag !== "--collection") return;
+		if (!COLLECTION_SUGGESTIONS_SUPPORTED.includes(this.currentTool)) return;
+
+		const listId = `pkm-rag-console-collections-${this.currentTool}`;
+		const datalist = wrapper.createEl("datalist", { attr: { id: listId } });
+		const tool = this.currentTool;
+		const client = this.getClient(tool);
+		void client
+			.runCommand("collection.list")
+			.then((result) => {
+				const names = parseCollectionNames(tool, result.stdout);
+				datalist.empty();
+				for (const name of names) datalist.createEl("option", { value: name });
+			})
+			.catch(() => {
+				/* collection list unavailable (tool not installed/configured yet); leave field freeform */
+			});
+		input.setAttr("list", listId);
+	}
+
+	private renderChipField(flag: FlagSpec, container: HTMLElement): void {
+		const wrapper = container.createDiv({ cls: "pkm-rag-console-chip-field" });
 		wrapper.createEl("label", { text: flag.label, cls: "setting-item-name" });
 		if (flag.description) {
 			wrapper.createEl("p", { text: flag.description, cls: "setting-item-description" });
@@ -302,17 +362,7 @@ export class CliConsoleView extends ItemView {
 		};
 
 		const input = wrapper.createEl("input", { type: "text", placeholder: "Type a value, press Enter" });
-
-		// qmd's collection flags get live suggestions from real collections instead of a blank freeform field.
-		if (this.currentTool === "qmd" && (flag.flag === "-c" || flag.flag === "--collection")) {
-			const listId = "pkm-rag-console-qmd-collections";
-			const datalist = wrapper.createEl("datalist", { attr: { id: listId } });
-			void this.plugin.qmdClient.getCollections().then((collections) => {
-				datalist.empty();
-				for (const c of collections) datalist.createEl("option", { value: c });
-			});
-			input.setAttr("list", listId);
-		}
+		this.attachCollectionSuggestions(input, wrapper, flag);
 
 		input.addEventListener("keydown", (e) => {
 			if (e.key === "Enter" && input.value.trim()) {
@@ -352,6 +402,9 @@ export class CliConsoleView extends ItemView {
 	private async executeCommand(command: CommandNode): Promise<void> {
 		const client = this.getClient(this.currentTool);
 		this.outputEl.setText("");
+		this.outputEl.removeClass("pkm-rag-hidden");
+		this.resultsEl.empty();
+		this.resultsEl.addClass("pkm-rag-hidden");
 		this.runBtn.disabled = true;
 
 		if (command.executionMode === "streaming") {
@@ -390,10 +443,36 @@ export class CliConsoleView extends ItemView {
 
 	private finishOutput(result: CommandResult): void {
 		if (result.json !== undefined) {
+			const normalized = normalizeResults(this.currentTool, result.json);
+			if (normalized) {
+				this.renderResultCards(normalized);
+				return;
+			}
 			this.outputEl.setText(JSON.stringify(result.json, null, 2));
 			return;
 		}
 		const parts = [result.stdout, result.stderr].filter(Boolean);
 		this.outputEl.setText(parts.join("\n---stderr---\n") || `(no output, exit code ${result.code})`);
+	}
+
+	/** Renders search-style results as clickable cards with native Obsidian hover-preview
+	 *  links, instead of a raw JSON dump — the file link behaves exactly like a normal
+	 *  markdown wikilink (click to open, hover to preview, images included). */
+	private renderResultCards(results: NormalizedResult[]): void {
+		this.outputEl.addClass("pkm-rag-hidden");
+		this.resultsEl.removeClass("pkm-rag-hidden");
+		this.resultsEl.empty();
+
+		for (const result of results) {
+			const card = this.resultsEl.createDiv({ cls: "pkm-rag-console-result-card" });
+			const titleRow = card.createDiv({ cls: "pkm-rag-console-result-title-row" });
+			renderFileLink(titleRow, this.app, this, CLI_CONSOLE_HOVER_SOURCE, result.fileRef, result.title);
+			if (result.score !== undefined) {
+				titleRow.createSpan({ text: result.score.toFixed(2), cls: "pkm-rag-console-result-score" });
+			}
+			if (result.subtitle) {
+				card.createDiv({ text: result.subtitle, cls: "pkm-rag-console-result-subtitle" });
+			}
+		}
 	}
 }

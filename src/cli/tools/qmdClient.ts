@@ -1,6 +1,7 @@
 import { GenericCliClient, JSON_OUTPUT_VALUE_KEY } from "../genericClient";
 import { qmdSchema } from "../schemas/qmd";
 import { TOOLS } from "../toolRegistry";
+import { parseCollectionNames } from "../collectionNames";
 
 export interface QmdSearchResult {
 	docid: string;
@@ -48,7 +49,7 @@ export class QmdClient {
 	async getCollections(): Promise<string[]> {
 		try {
 			const result = await this.client.runCommand("collection.list");
-			return this.parseCollectionNames(result.stdout);
+			return parseCollectionNames("qmd", result.stdout);
 		} catch {
 			return [];
 		}
@@ -99,22 +100,5 @@ export class QmdClient {
 		});
 		if (Array.isArray(result.json)) return result.json as QmdSearchResult[];
 		return [];
-	}
-
-	/**
-	 * `qmd collection list` prints a formatted block, not JSON:
-	 *   name (qmd://name/)[ [excluded]]
-	 *     Pattern:  <glob>
-	 *     Files:    <n>
-	 *     Updated:  <date>
-	 * Extract just the name from each header line.
-	 */
-	private parseCollectionNames(output: string): string[] {
-		const names: string[] = [];
-		for (const line of output.split("\n")) {
-			const match = /^(\S.+?) \(qmd:\/\//.exec(line);
-			if (match) names.push(match[1]);
-		}
-		return names;
 	}
 }

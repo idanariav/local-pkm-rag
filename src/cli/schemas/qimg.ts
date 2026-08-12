@@ -112,15 +112,6 @@ const commands: CommandNode[] = [
 		executionMode: "streaming",
 	},
 	{
-		id: "get",
-		argvPath: ["get"],
-		category: "search",
-		label: "Get image metadata",
-		positionals: [{ name: "target", type: "string", label: "Path or #docid", required: true }],
-		flags: [],
-		executionMode: "buffered",
-	},
-	{
 		id: "tsearch",
 		argvPath: ["tsearch"],
 		category: "search",
@@ -149,6 +140,15 @@ const commands: CommandNode[] = [
 		flags: sharedSearchFlags(),
 		executionMode: "buffered",
 		jsonFlag: "--json",
+	},
+	{
+		id: "get",
+		argvPath: ["get"],
+		category: "search",
+		label: "Get image metadata",
+		positionals: [{ name: "target", type: "string", label: "Path or #docid", required: true }],
+		flags: [],
+		executionMode: "buffered",
 	},
 	{
 		id: "status",
