@@ -285,6 +285,15 @@ export class CliConsoleView extends ItemView {
 	private renderFlagField(flag: FlagSpec, container: HTMLElement): void {
 		const effectiveDefault = this.getEffectiveDefault(flag);
 
+		if (this.isCollectionFlag(flag) && COLLECTION_LIST_COMMAND_ID[this.currentTool]) {
+			if (flag.repeatable) {
+				this.renderCollectionChipField(flag, container);
+			} else {
+				this.renderCollectionDropdownField(flag, container);
+			}
+			return;
+		}
+
 		if (flag.type === "boolean") {
 			const initial = effectiveDefault === "true";
 			this.values[flag.flag] = initial;
@@ -322,32 +331,98 @@ export class CliConsoleView extends ItemView {
 			text.onChange((v) => {
 				this.values[flag.flag] = flag.type === "number" ? (v === "" ? undefined : Number(v)) : v || undefined;
 			});
-			this.attachCollectionSuggestions(text.inputEl, container, flag);
 		});
 	}
 
-	/** For collection-like flags on tools we know how to parse collection-listing output for,
-	 *  attach a live datalist of real collection names instead of leaving the field blank/freeform. */
-	private attachCollectionSuggestions(input: HTMLInputElement, wrapper: HTMLElement, flag: FlagSpec): void {
-		if (flag.flag !== "-c" && flag.flag !== "--collection") return;
+	private isCollectionFlag(flag: FlagSpec): boolean {
+		return flag.flag === "-c" || flag.flag === "--collection";
+	}
+
+	/** Fetches and parses the current tool's real collection names, for tools whose
+	 *  collection-listing output we know how to parse (empty array if unsupported or
+	 *  the command fails, e.g. tool not installed/configured yet). */
+	private async fetchCollectionNames(): Promise<string[]> {
 		const tool = this.currentTool;
 		const listCommandId = COLLECTION_LIST_COMMAND_ID[tool];
-		if (!listCommandId) return;
+		if (!listCommandId) return [];
+		try {
+			const result = await this.getClient(tool).runCommand(listCommandId);
+			return parseCollectionNames(tool, result.stdout);
+		} catch {
+			return [];
+		}
+	}
 
-		const listId = `pkm-rag-console-collections-${tool}`;
-		const datalist = wrapper.createEl("datalist", { attr: { id: listId } });
-		const client = this.getClient(tool);
-		void client
-			.runCommand(listCommandId)
-			.then((result) => {
-				const names = parseCollectionNames(tool, result.stdout);
-				datalist.empty();
-				for (const name of names) datalist.createEl("option", { value: name });
-			})
-			.catch(() => {
-				/* collection list unavailable (tool not installed/configured yet); leave field freeform */
+	/** Single-collection flags (qimg/qnode/qvoid's --collection) get a real dropdown of
+	 *  live collection names instead of a freeform text field, so it's impossible to
+	 *  typo a collection name. */
+	private renderCollectionDropdownField(flag: FlagSpec, container: HTMLElement): void {
+		const effectiveDefault = this.getEffectiveDefault(flag);
+		if (effectiveDefault !== undefined) this.values[flag.flag] = effectiveDefault;
+
+		let selectEl!: HTMLSelectElement;
+		new Setting(container).setName(flag.label).setDesc(flag.description ?? "").addDropdown((dd) => {
+			selectEl = dd.selectEl;
+			dd.addOption("", "All collections");
+			dd.setValue("");
+			dd.onChange((v) => {
+				this.values[flag.flag] = v || undefined;
 			});
-		input.setAttr("list", listId);
+		});
+
+		void this.fetchCollectionNames().then((names) => {
+			for (const name of names) selectEl.createEl("option", { value: name, text: name });
+			if (effectiveDefault && names.includes(effectiveDefault)) {
+				selectEl.value = effectiveDefault;
+			}
+		});
+	}
+
+	/** Repeatable collection flags (qmd's -c) get a dropdown that adds a chip on
+	 *  selection instead of a freeform text input — same multi-select chip UX, but
+	 *  constrained to real collection names. */
+	private renderCollectionChipField(flag: FlagSpec, container: HTMLElement): void {
+		const wrapper = container.createDiv({ cls: "pkm-rag-console-chip-field" });
+		wrapper.createEl("label", { text: flag.label, cls: "setting-item-name" });
+		if (flag.description) {
+			wrapper.createEl("p", { text: flag.description, cls: "setting-item-description" });
+		}
+
+		const effectiveDefault = this.getEffectiveDefault(flag);
+		const items: string[] = effectiveDefault ? [effectiveDefault] : [];
+		this.values[flag.flag] = items;
+
+		const chipsEl = wrapper.createDiv({ cls: "pkm-rag-chips-container" });
+		const renderChips = () => {
+			chipsEl.empty();
+			for (const item of items) {
+				const chip = chipsEl.createDiv({ cls: "pkm-rag-chip" });
+				chip.createSpan({ text: item });
+				const removeBtn = chip.createEl("button", { text: "×", cls: "pkm-rag-chip-remove" });
+				removeBtn.addEventListener("click", () => {
+					const idx = items.indexOf(item);
+					if (idx >= 0) items.splice(idx, 1);
+					renderChips();
+				});
+			}
+		};
+
+		const selectEl = wrapper.createEl("select");
+		selectEl.createEl("option", { value: "", text: "Add a collection..." });
+		selectEl.addEventListener("change", () => {
+			const value = selectEl.value;
+			if (value && !items.includes(value)) {
+				items.push(value);
+				renderChips();
+			}
+			selectEl.value = "";
+		});
+
+		void this.fetchCollectionNames().then((names) => {
+			for (const name of names) selectEl.createEl("option", { value: name, text: name });
+		});
+
+		renderChips();
 	}
 
 	private renderChipField(flag: FlagSpec, container: HTMLElement): void {
@@ -377,7 +452,6 @@ export class CliConsoleView extends ItemView {
 		};
 
 		const input = wrapper.createEl("input", { type: "text", placeholder: "Type a value, press Enter" });
-		this.attachCollectionSuggestions(input, wrapper, flag);
 
 		input.addEventListener("keydown", (e) => {
 			if (e.key === "Enter" && input.value.trim()) {

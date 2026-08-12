@@ -90,9 +90,19 @@ export class PkmRagSettingTab extends PluginSettingTab {
 			);
 	}
 
-	/** Resolves the current default (empty string = unset) for a search flag in settings. */
-	private getFlagDefault(id: ToolId, flag: FlagSpec): string {
-		return this.plugin.settings.toolFlagDefaults[id]?.[flag.flag] ?? "";
+	/** Whether the user has explicitly configured an override for this flag (as opposed to
+	 *  just seeing the tool's own schema default displayed). */
+	private hasFlagOverride(id: ToolId, flag: FlagSpec): boolean {
+		return this.plugin.settings.toolFlagDefaults[id]?.[flag.flag] !== undefined;
+	}
+
+	/** What to show in the field: the user's override if set, otherwise the command
+	 *  schema's own default (so the field always displays a real value, not a blank
+	 *  with a ghost placeholder) — falls back to "" only when neither exists. */
+	private getFlagDisplayValue(id: ToolId, flag: FlagSpec): string {
+		const override = this.plugin.settings.toolFlagDefaults[id]?.[flag.flag];
+		if (override !== undefined) return override;
+		return flag.default !== undefined ? String(flag.default) : "";
 	}
 
 	private async setFlagDefault(id: ToolId, flag: FlagSpec, value: string): Promise<void> {
@@ -105,34 +115,36 @@ export class PkmRagSettingTab extends PluginSettingTab {
 		await this.plugin.saveSettings();
 	}
 
-	/** Type-aware field for one search flag's configured default: toggle for booleans,
-	 *  dropdown for enums, text otherwise. Empty/unset means "use the command's own default." */
+	/** Type-aware field for one search flag's default: toggle for booleans, dropdown for
+	 *  enums, text otherwise. Pre-filled with the tool's own schema default so the field
+	 *  shows a real value; only writes to settings once the user actually changes it, so
+	 *  an untouched field keeps tracking the tool's default rather than freezing it. */
 	private renderSearchDefaultField(container: HTMLElement, id: ToolId, flag: FlagSpec): void {
-		const current = this.getFlagDefault(id, flag);
+		const display = this.getFlagDisplayValue(id, flag);
 		const setting = new Setting(container).setName(flag.label).setDesc(flag.description ?? flag.flag);
+		if (this.hasFlagOverride(id, flag)) {
+			setting.setDesc(`${flag.description ?? flag.flag} (overridden)`);
+		}
 
 		if (flag.type === "boolean") {
 			setting.addToggle((toggle) =>
-				toggle.setValue(current === "true").onChange((v) => this.setFlagDefault(id, flag, v ? "true" : ""))
+				toggle.setValue(display === "true").onChange((v) => this.setFlagDefault(id, flag, v ? "true" : ""))
 			);
 			return;
 		}
 
 		if (flag.type === "enum" && flag.enumValues) {
 			setting.addDropdown((dd) => {
-				dd.addOption("", "(use command default)");
+				dd.addOption("", flag.default !== undefined ? `(default: ${flag.default})` : "(none)");
 				for (const v of flag.enumValues as string[]) dd.addOption(v, v);
-				dd.setValue(current);
+				dd.setValue(display);
 				dd.onChange((v) => this.setFlagDefault(id, flag, v));
 			});
 			return;
 		}
 
 		setting.addText((text) =>
-			text
-				.setPlaceholder(flag.default !== undefined ? String(flag.default) : "")
-				.setValue(current)
-				.onChange((v) => this.setFlagDefault(id, flag, v.trim()))
+			text.setValue(display).onChange((v) => this.setFlagDefault(id, flag, v.trim()))
 		);
 	}
 

@@ -509,7 +509,8 @@
 	margin-bottom: 12px;
 }
 
-.pkm-rag-console-chip-field input[type="text"] {
+.pkm-rag-console-chip-field input[type="text"],
+.pkm-rag-console-chip-field select {
 	width: 100%;
 }
 

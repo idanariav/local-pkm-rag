@@ -1566,8 +1566,10 @@ function getSearchFlags(schema) {
     if (command.category !== "search")
       continue;
     for (const flag of command.flags) {
-      if (!seen.has(flag.flag))
+      const existing = seen.get(flag.flag);
+      if (!existing || existing.default === void 0 && flag.default !== void 0) {
         seen.set(flag.flag, flag);
+      }
     }
   }
   return Array.from(seen.values());
@@ -1634,10 +1636,21 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
       })
     );
   }
-  /** Resolves the current default (empty string = unset) for a search flag in settings. */
-  getFlagDefault(id, flag) {
-    var _a, _b;
-    return (_b = (_a = this.plugin.settings.toolFlagDefaults[id]) == null ? void 0 : _a[flag.flag]) != null ? _b : "";
+  /** Whether the user has explicitly configured an override for this flag (as opposed to
+   *  just seeing the tool's own schema default displayed). */
+  hasFlagOverride(id, flag) {
+    var _a;
+    return ((_a = this.plugin.settings.toolFlagDefaults[id]) == null ? void 0 : _a[flag.flag]) !== void 0;
+  }
+  /** What to show in the field: the user's override if set, otherwise the command
+   *  schema's own default (so the field always displays a real value, not a blank
+   *  with a ghost placeholder) — falls back to "" only when neither exists. */
+  getFlagDisplayValue(id, flag) {
+    var _a;
+    const override = (_a = this.plugin.settings.toolFlagDefaults[id]) == null ? void 0 : _a[flag.flag];
+    if (override !== void 0)
+      return override;
+    return flag.default !== void 0 ? String(flag.default) : "";
   }
   async setFlagDefault(id, flag, value) {
     if (!this.plugin.settings.toolFlagDefaults[id])
@@ -1649,30 +1662,35 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
     }
     await this.plugin.saveSettings();
   }
-  /** Type-aware field for one search flag's configured default: toggle for booleans,
-   *  dropdown for enums, text otherwise. Empty/unset means "use the command's own default." */
+  /** Type-aware field for one search flag's default: toggle for booleans, dropdown for
+   *  enums, text otherwise. Pre-filled with the tool's own schema default so the field
+   *  shows a real value; only writes to settings once the user actually changes it, so
+   *  an untouched field keeps tracking the tool's default rather than freezing it. */
   renderSearchDefaultField(container, id, flag) {
-    var _a;
-    const current = this.getFlagDefault(id, flag);
+    var _a, _b;
+    const display = this.getFlagDisplayValue(id, flag);
     const setting = new import_obsidian3.Setting(container).setName(flag.label).setDesc((_a = flag.description) != null ? _a : flag.flag);
+    if (this.hasFlagOverride(id, flag)) {
+      setting.setDesc(`${(_b = flag.description) != null ? _b : flag.flag} (overridden)`);
+    }
     if (flag.type === "boolean") {
       setting.addToggle(
-        (toggle) => toggle.setValue(current === "true").onChange((v) => this.setFlagDefault(id, flag, v ? "true" : ""))
+        (toggle) => toggle.setValue(display === "true").onChange((v) => this.setFlagDefault(id, flag, v ? "true" : ""))
       );
       return;
     }
     if (flag.type === "enum" && flag.enumValues) {
       setting.addDropdown((dd) => {
-        dd.addOption("", "(use command default)");
+        dd.addOption("", flag.default !== void 0 ? `(default: ${flag.default})` : "(none)");
         for (const v of flag.enumValues)
           dd.addOption(v, v);
-        dd.setValue(current);
+        dd.setValue(display);
         dd.onChange((v) => this.setFlagDefault(id, flag, v));
       });
       return;
     }
     setting.addText(
-      (text3) => text3.setPlaceholder(flag.default !== void 0 ? String(flag.default) : "").setValue(current).onChange((v) => this.setFlagDefault(id, flag, v.trim()))
+      (text3) => text3.setValue(display).onChange((v) => this.setFlagDefault(id, flag, v.trim()))
     );
   }
   /** One collapsed-by-default section per tool listing every unique flag across its
@@ -10574,6 +10592,14 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
   renderFlagField(flag, container) {
     var _a, _b, _c;
     const effectiveDefault = this.getEffectiveDefault(flag);
+    if (this.isCollectionFlag(flag) && COLLECTION_LIST_COMMAND_ID[this.currentTool]) {
+      if (flag.repeatable) {
+        this.renderCollectionChipField(flag, container);
+      } else {
+        this.renderCollectionDropdownField(flag, container);
+      }
+      return;
+    }
     if (flag.type === "boolean") {
       const initial = effectiveDefault === "true";
       this.values[flag.flag] = initial;
@@ -10612,29 +10638,93 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       text3.onChange((v) => {
         this.values[flag.flag] = flag.type === "number" ? v === "" ? void 0 : Number(v) : v || void 0;
       });
-      this.attachCollectionSuggestions(text3.inputEl, container, flag);
     });
   }
-  /** For collection-like flags on tools we know how to parse collection-listing output for,
-   *  attach a live datalist of real collection names instead of leaving the field blank/freeform. */
-  attachCollectionSuggestions(input, wrapper, flag) {
-    if (flag.flag !== "-c" && flag.flag !== "--collection")
-      return;
+  isCollectionFlag(flag) {
+    return flag.flag === "-c" || flag.flag === "--collection";
+  }
+  /** Fetches and parses the current tool's real collection names, for tools whose
+   *  collection-listing output we know how to parse (empty array if unsupported or
+   *  the command fails, e.g. tool not installed/configured yet). */
+  async fetchCollectionNames() {
     const tool = this.currentTool;
     const listCommandId = COLLECTION_LIST_COMMAND_ID[tool];
     if (!listCommandId)
-      return;
-    const listId = `pkm-rag-console-collections-${tool}`;
-    const datalist = wrapper.createEl("datalist", { attr: { id: listId } });
-    const client = this.getClient(tool);
-    void client.runCommand(listCommandId).then((result) => {
-      const names = parseCollectionNames(tool, result.stdout);
-      datalist.empty();
-      for (const name of names)
-        datalist.createEl("option", { value: name });
-    }).catch(() => {
+      return [];
+    try {
+      const result = await this.getClient(tool).runCommand(listCommandId);
+      return parseCollectionNames(tool, result.stdout);
+    } catch (e) {
+      return [];
+    }
+  }
+  /** Single-collection flags (qimg/qnode/qvoid's --collection) get a real dropdown of
+   *  live collection names instead of a freeform text field, so it's impossible to
+   *  typo a collection name. */
+  renderCollectionDropdownField(flag, container) {
+    var _a;
+    const effectiveDefault = this.getEffectiveDefault(flag);
+    if (effectiveDefault !== void 0)
+      this.values[flag.flag] = effectiveDefault;
+    let selectEl;
+    new import_obsidian9.Setting(container).setName(flag.label).setDesc((_a = flag.description) != null ? _a : "").addDropdown((dd) => {
+      selectEl = dd.selectEl;
+      dd.addOption("", "All collections");
+      dd.setValue("");
+      dd.onChange((v) => {
+        this.values[flag.flag] = v || void 0;
+      });
     });
-    input.setAttr("list", listId);
+    void this.fetchCollectionNames().then((names) => {
+      for (const name of names)
+        selectEl.createEl("option", { value: name, text: name });
+      if (effectiveDefault && names.includes(effectiveDefault)) {
+        selectEl.value = effectiveDefault;
+      }
+    });
+  }
+  /** Repeatable collection flags (qmd's -c) get a dropdown that adds a chip on
+   *  selection instead of a freeform text input — same multi-select chip UX, but
+   *  constrained to real collection names. */
+  renderCollectionChipField(flag, container) {
+    const wrapper = container.createDiv({ cls: "pkm-rag-console-chip-field" });
+    wrapper.createEl("label", { text: flag.label, cls: "setting-item-name" });
+    if (flag.description) {
+      wrapper.createEl("p", { text: flag.description, cls: "setting-item-description" });
+    }
+    const effectiveDefault = this.getEffectiveDefault(flag);
+    const items = effectiveDefault ? [effectiveDefault] : [];
+    this.values[flag.flag] = items;
+    const chipsEl = wrapper.createDiv({ cls: "pkm-rag-chips-container" });
+    const renderChips = () => {
+      chipsEl.empty();
+      for (const item of items) {
+        const chip = chipsEl.createDiv({ cls: "pkm-rag-chip" });
+        chip.createSpan({ text: item });
+        const removeBtn = chip.createEl("button", { text: "\xD7", cls: "pkm-rag-chip-remove" });
+        removeBtn.addEventListener("click", () => {
+          const idx = items.indexOf(item);
+          if (idx >= 0)
+            items.splice(idx, 1);
+          renderChips();
+        });
+      }
+    };
+    const selectEl = wrapper.createEl("select");
+    selectEl.createEl("option", { value: "", text: "Add a collection..." });
+    selectEl.addEventListener("change", () => {
+      const value = selectEl.value;
+      if (value && !items.includes(value)) {
+        items.push(value);
+        renderChips();
+      }
+      selectEl.value = "";
+    });
+    void this.fetchCollectionNames().then((names) => {
+      for (const name of names)
+        selectEl.createEl("option", { value: name, text: name });
+    });
+    renderChips();
   }
   renderChipField(flag, container) {
     const wrapper = container.createDiv({ cls: "pkm-rag-console-chip-field" });
@@ -10661,7 +10751,6 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       }
     };
     const input = wrapper.createEl("input", { type: "text", placeholder: "Type a value, press Enter" });
-    this.attachCollectionSuggestions(input, wrapper, flag);
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && input.value.trim()) {
         e.preventDefault();
