@@ -4,6 +4,7 @@ import { TOOLS } from "../cli/toolRegistry";
 import { detectBinary } from "../cli/binaryResolver";
 import { buildAugmentedEnv } from "../cli/pathResolver";
 import { CliRunner, StreamingHandle } from "../cli/processRunner";
+import { GenericCliClient, StreamingCommandHandle } from "../cli/genericClient";
 import { DetectResult, ToolId } from "../cli/types";
 
 const NODE_URL = "https://nodejs.org/";
@@ -13,6 +14,7 @@ const HOMEBREW_URL = "https://brew.sh/";
 interface ToolCard {
 	statusEl: HTMLElement;
 	installBtn: HTMLButtonElement;
+	updateBtn: HTMLButtonElement;
 	cancelBtn: HTMLButtonElement;
 	logEl: HTMLElement;
 }
@@ -26,6 +28,8 @@ export class SetupWizardModal extends Modal {
 	private nodeAvailable = false;
 	private readonly cards: Partial<Record<ToolId, ToolCard>> = {};
 	private readonly activeInstalls: Partial<Record<ToolId, StreamingHandle>> = {};
+	private readonly activeUpdates: Partial<Record<ToolId, StreamingCommandHandle>> = {};
+	private readonly clients: Partial<Record<ToolId, GenericCliClient>> = {};
 
 	constructor(app: App, plugin: PkmRagPlugin) {
 		super(app);
@@ -63,7 +67,28 @@ export class SetupWizardModal extends Modal {
 		for (const handle of Object.values(this.activeInstalls)) {
 			handle?.kill();
 		}
+		for (const handle of Object.values(this.activeUpdates)) {
+			handle?.kill();
+		}
 		this.contentEl.empty();
+	}
+
+	private getClient(id: ToolId): GenericCliClient {
+		const tool = TOOLS[id];
+		let client = this.clients[id];
+		if (!client) {
+			client = new GenericCliClient(
+				tool.binaryName,
+				tool.healthCheckCommand,
+				tool.schema,
+				this.plugin.settings.toolPaths[id] || undefined,
+				this.plugin.settings.commandTimeoutMs
+			);
+			this.clients[id] = client;
+		} else {
+			client.updatePath(this.plugin.settings.toolPaths[id] || undefined);
+		}
+		return client;
 	}
 
 	private async checkPrereqs(prereqEl: HTMLElement): Promise<void> {
@@ -109,17 +134,20 @@ export class SetupWizardModal extends Modal {
 
 		const actionsEl = card.createDiv({ cls: "pkm-rag-wizard-card-actions" });
 		const installBtn = actionsEl.createEl("button", { text: "Install" });
+		const updateBtn = actionsEl.createEl("button", { text: "Update" });
 		const cancelBtn = actionsEl.createEl("button", { text: "Cancel" });
 		cancelBtn.addClass("pkm-rag-hidden");
 
 		const logEl = card.createEl("pre", { cls: "pkm-rag-wizard-log pkm-rag-hidden" });
 
 		installBtn.addEventListener("click", () => this.installTool(id));
+		updateBtn.addEventListener("click", () => this.updateTool(id));
 		cancelBtn.addEventListener("click", () => {
 			this.activeInstalls[id]?.kill();
+			this.activeUpdates[id]?.kill();
 		});
 
-		this.cards[id] = { statusEl, installBtn, cancelBtn, logEl };
+		this.cards[id] = { statusEl, installBtn, updateBtn, cancelBtn, logEl };
 	}
 
 	private describeStatus(result: DetectResult): string {
@@ -147,6 +175,7 @@ export class SetupWizardModal extends Modal {
 		card.statusEl.className = `pkm-rag-wizard-status pkm-rag-wizard-status-${result.status}`;
 		card.installBtn.setText(result.status === "healthy" ? "Reinstall" : "Install");
 		card.installBtn.disabled = !this.nodeAvailable;
+		card.updateBtn.disabled = result.status !== "healthy";
 
 		if (result.status === "healthy" && result.resolvedPath && !this.plugin.settings.toolPaths[id]) {
 			this.plugin.settings.toolPaths[id] = result.resolvedPath;
@@ -156,10 +185,11 @@ export class SetupWizardModal extends Modal {
 
 	private async installTool(id: ToolId): Promise<void> {
 		const card = this.cards[id];
-		if (!card || this.activeInstalls[id]) return;
+		if (!card || this.activeInstalls[id] || this.activeUpdates[id]) return;
 		const tool = TOOLS[id];
 
 		card.installBtn.disabled = true;
+		card.updateBtn.disabled = true;
 		card.cancelBtn.removeClass("pkm-rag-hidden");
 		card.logEl.removeClass("pkm-rag-hidden");
 		card.logEl.setText("");
@@ -188,6 +218,55 @@ export class SetupWizardModal extends Modal {
 			append(`\n[cancelled or failed: ${(error as Error).message}]\n`);
 		} finally {
 			delete this.activeInstalls[id];
+			card.cancelBtn.addClass("pkm-rag-hidden");
+			card.installBtn.disabled = !this.nodeAvailable;
+			await this.refreshStatus(id);
+		}
+	}
+
+	/** Runs this tool's configured update sequence (Settings → Update Command Sequences)
+	 *  one command at a time, stopping at the first non-zero exit code. */
+	private async updateTool(id: ToolId): Promise<void> {
+		const card = this.cards[id];
+		if (!card || this.activeInstalls[id] || this.activeUpdates[id]) return;
+		const tool = TOOLS[id];
+		const commandIds = this.plugin.settings.toolUpdateCommands[id] ?? [];
+		if (commandIds.length === 0) {
+			new Notice(`No update commands configured for ${tool.displayName}.`);
+			return;
+		}
+
+		card.installBtn.disabled = true;
+		card.updateBtn.disabled = true;
+		card.cancelBtn.removeClass("pkm-rag-hidden");
+		card.logEl.removeClass("pkm-rag-hidden");
+		card.logEl.setText("");
+		card.statusEl.setText("Updating...");
+		card.statusEl.className = "pkm-rag-wizard-status pkm-rag-wizard-status-installing";
+
+		const client = this.getClient(id);
+		const append = (chunk: string) => {
+			card.logEl.setText(card.logEl.getText() + chunk);
+			card.logEl.scrollTop = card.logEl.scrollHeight;
+		};
+
+		try {
+			for (const commandId of commandIds) {
+				append(`\n$ ${tool.binaryName} ${commandId}\n`);
+				const handle = await client.runCommandStreaming(commandId, {}, append, append);
+				this.activeUpdates[id] = handle;
+				const result = await handle.done;
+				delete this.activeUpdates[id];
+				if (result.code !== 0) {
+					new Notice(`${tool.displayName} update failed at "${commandId}" (exit ${result.code}). See the log for details.`);
+					return;
+				}
+			}
+			new Notice(`${tool.displayName} updated.`);
+		} catch (error) {
+			append(`\n[cancelled or failed: ${(error as Error).message}]\n`);
+		} finally {
+			delete this.activeUpdates[id];
 			card.cancelBtn.addClass("pkm-rag-hidden");
 			card.installBtn.disabled = !this.nodeAvailable;
 			await this.refreshStatus(id);

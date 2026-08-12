@@ -1050,6 +1050,12 @@ var DEFAULT_SETTINGS = {
   commandTimeoutMs: DEFAULTS.DEFAULT_COMMAND_TIMEOUT_MS,
   setupWizardShown: false,
   toolFlagDefaults: Object.fromEntries(TOOL_IDS.map((id) => [id, {}])),
+  toolUpdateCommands: {
+    qmd: ["index", "embed"],
+    qimg: ["index", "caption", "ocr", "embed"],
+    qnode: ["index", "metrics.compute"],
+    qvoid: ["index", "classify", "embed"]
+  },
   defaultCollection: DEFAULTS.QMD_DEFAULT_COLLECTION
 };
 function migrateLegacySettings(settings) {
@@ -1405,6 +1411,129 @@ async function detectBinary(binaryName, healthCheckArgs, overridePath) {
 
 // src/views/setupWizardModal.ts
 var import_obsidian2 = require("obsidian");
+
+// src/cli/genericClient.ts
+var JSON_OUTPUT_VALUE_KEY = "__outputJson";
+var DEFAULT_TIMEOUT_MS = 3e4;
+function buildArgv(command, values) {
+  const argv = [...command.argvPath];
+  for (const positional of command.positionals) {
+    const value = values[positional.name];
+    if (value === void 0 || value === null || value === "") {
+      if (positional.required) {
+        throw new Error(`Missing required argument: ${positional.label}`);
+      }
+      continue;
+    }
+    argv.push(String(value));
+  }
+  for (const flag of command.flags) {
+    const value = values[flag.flag];
+    if (value === void 0 || value === null)
+      continue;
+    if (flag.type === "boolean") {
+      if (value === true)
+        argv.push(flag.flag);
+      continue;
+    }
+    if (flag.repeatable) {
+      const items = Array.isArray(value) ? value : [value];
+      for (const item of items) {
+        if (item === void 0 || item === null || item === "")
+          continue;
+        argv.push(flag.flag, String(item));
+      }
+      continue;
+    }
+    if (value === "")
+      continue;
+    argv.push(flag.flag, String(value));
+  }
+  if (command.jsonFlag && values[JSON_OUTPUT_VALUE_KEY] === true) {
+    argv.push(command.jsonFlag);
+  }
+  return argv;
+}
+function attachJson(command, argv, result) {
+  if (!command.jsonFlag || !argv.includes(command.jsonFlag))
+    return result;
+  try {
+    return { ...result, json: JSON.parse(result.stdout) };
+  } catch (e) {
+    return result;
+  }
+}
+var GenericCliClient = class {
+  constructor(binaryName, healthCheckCommand, schema, overridePath, defaultTimeoutMs = DEFAULT_TIMEOUT_MS) {
+    this.binaryName = binaryName;
+    this.healthCheckCommand = healthCheckCommand;
+    this.schema = schema;
+    this.overridePath = overridePath;
+    this.defaultTimeoutMs = defaultTimeoutMs;
+    this.runner = new CliRunner();
+  }
+  updatePath(overridePath) {
+    this.overridePath = overridePath;
+  }
+  updateDefaultTimeout(timeoutMs) {
+    this.defaultTimeoutMs = timeoutMs;
+  }
+  async isAvailable() {
+    const result = await this.detect();
+    return result.status === "healthy";
+  }
+  detect() {
+    return detectBinary(this.binaryName, this.healthCheckCommand, this.overridePath);
+  }
+  getCommand(commandId) {
+    const command = this.schema.commands.find((c) => c.id === commandId);
+    if (!command)
+      throw new Error(`Unknown command "${commandId}" for tool "${this.schema.id}"`);
+    return command;
+  }
+  listCommands() {
+    return this.schema.commands;
+  }
+  buildArgvPreview(commandId, values) {
+    return buildArgv(this.getCommand(commandId), values);
+  }
+  /** Buffered execution: waits for the process to exit and returns the full result. */
+  async runCommand(commandId, values = {}, timeoutMs) {
+    const command = this.getCommand(commandId);
+    const argv = buildArgv(command, values);
+    const env = await buildAugmentedEnv();
+    const bin = resolveExecutableTarget(this.binaryName, this.overridePath);
+    const result = await this.runner.run(bin, argv, {
+      env,
+      timeoutMs: timeoutMs != null ? timeoutMs : this.defaultTimeoutMs
+    });
+    return attachJson(command, argv, result);
+  }
+  /** Streaming execution: returns a handle with kill() immediately, output arrives via callbacks. */
+  async runCommandStreaming(commandId, values = {}, onStdout, onStderr) {
+    const command = this.getCommand(commandId);
+    const argv = buildArgv(command, values);
+    const env = await buildAugmentedEnv();
+    const bin = resolveExecutableTarget(this.binaryName, this.overridePath);
+    let stdout = "";
+    let stderr = "";
+    const handle = this.runner.runStreaming(bin, argv, {
+      env,
+      onStdout: (chunk) => {
+        stdout += chunk;
+        onStdout == null ? void 0 : onStdout(chunk);
+      },
+      onStderr: (chunk) => {
+        stderr += chunk;
+        onStderr == null ? void 0 : onStderr(chunk);
+      }
+    });
+    const done = handle.promise.then(({ code }) => attachJson(command, argv, { stdout, stderr, code }));
+    return { kill: handle.kill, done, argv, command };
+  }
+};
+
+// src/views/setupWizardModal.ts
 var NODE_URL = "https://nodejs.org/";
 var NVM_URL = "https://github.com/nvm-sh/nvm";
 var HOMEBREW_URL = "https://brew.sh/";
@@ -1415,6 +1544,8 @@ var SetupWizardModal = class extends import_obsidian2.Modal {
     this.nodeAvailable = false;
     this.cards = {};
     this.activeInstalls = {};
+    this.activeUpdates = {};
+    this.clients = {};
     this.plugin = plugin;
   }
   async onOpen() {
@@ -1442,7 +1573,27 @@ var SetupWizardModal = class extends import_obsidian2.Modal {
     for (const handle of Object.values(this.activeInstalls)) {
       handle == null ? void 0 : handle.kill();
     }
+    for (const handle of Object.values(this.activeUpdates)) {
+      handle == null ? void 0 : handle.kill();
+    }
     this.contentEl.empty();
+  }
+  getClient(id) {
+    const tool = TOOLS[id];
+    let client = this.clients[id];
+    if (!client) {
+      client = new GenericCliClient(
+        tool.binaryName,
+        tool.healthCheckCommand,
+        tool.schema,
+        this.plugin.settings.toolPaths[id] || void 0,
+        this.plugin.settings.commandTimeoutMs
+      );
+      this.clients[id] = client;
+    } else {
+      client.updatePath(this.plugin.settings.toolPaths[id] || void 0);
+    }
+    return client;
   }
   async checkPrereqs(prereqEl) {
     const [node2, npm] = await Promise.all([
@@ -1481,15 +1632,18 @@ var SetupWizardModal = class extends import_obsidian2.Modal {
     statusEl.setText("Checking...");
     const actionsEl = card.createDiv({ cls: "pkm-rag-wizard-card-actions" });
     const installBtn = actionsEl.createEl("button", { text: "Install" });
+    const updateBtn = actionsEl.createEl("button", { text: "Update" });
     const cancelBtn = actionsEl.createEl("button", { text: "Cancel" });
     cancelBtn.addClass("pkm-rag-hidden");
     const logEl = card.createEl("pre", { cls: "pkm-rag-wizard-log pkm-rag-hidden" });
     installBtn.addEventListener("click", () => this.installTool(id));
+    updateBtn.addEventListener("click", () => this.updateTool(id));
     cancelBtn.addEventListener("click", () => {
-      var _a;
+      var _a, _b;
       (_a = this.activeInstalls[id]) == null ? void 0 : _a.kill();
+      (_b = this.activeUpdates[id]) == null ? void 0 : _b.kill();
     });
-    this.cards[id] = { statusEl, installBtn, cancelBtn, logEl };
+    this.cards[id] = { statusEl, installBtn, updateBtn, cancelBtn, logEl };
   }
   describeStatus(result) {
     switch (result.status) {
@@ -1514,6 +1668,7 @@ var SetupWizardModal = class extends import_obsidian2.Modal {
     card.statusEl.className = `pkm-rag-wizard-status pkm-rag-wizard-status-${result.status}`;
     card.installBtn.setText(result.status === "healthy" ? "Reinstall" : "Install");
     card.installBtn.disabled = !this.nodeAvailable;
+    card.updateBtn.disabled = result.status !== "healthy";
     if (result.status === "healthy" && result.resolvedPath && !this.plugin.settings.toolPaths[id]) {
       this.plugin.settings.toolPaths[id] = result.resolvedPath;
       await this.plugin.saveSettings();
@@ -1521,10 +1676,11 @@ var SetupWizardModal = class extends import_obsidian2.Modal {
   }
   async installTool(id) {
     const card = this.cards[id];
-    if (!card || this.activeInstalls[id])
+    if (!card || this.activeInstalls[id] || this.activeUpdates[id])
       return;
     const tool = TOOLS[id];
     card.installBtn.disabled = true;
+    card.updateBtn.disabled = true;
     card.cancelBtn.removeClass("pkm-rag-hidden");
     card.logEl.removeClass("pkm-rag-hidden");
     card.logEl.setText("");
@@ -1552,6 +1708,57 @@ var SetupWizardModal = class extends import_obsidian2.Modal {
 `);
     } finally {
       delete this.activeInstalls[id];
+      card.cancelBtn.addClass("pkm-rag-hidden");
+      card.installBtn.disabled = !this.nodeAvailable;
+      await this.refreshStatus(id);
+    }
+  }
+  /** Runs this tool's configured update sequence (Settings → Update Command Sequences)
+   *  one command at a time, stopping at the first non-zero exit code. */
+  async updateTool(id) {
+    var _a;
+    const card = this.cards[id];
+    if (!card || this.activeInstalls[id] || this.activeUpdates[id])
+      return;
+    const tool = TOOLS[id];
+    const commandIds = (_a = this.plugin.settings.toolUpdateCommands[id]) != null ? _a : [];
+    if (commandIds.length === 0) {
+      new import_obsidian2.Notice(`No update commands configured for ${tool.displayName}.`);
+      return;
+    }
+    card.installBtn.disabled = true;
+    card.updateBtn.disabled = true;
+    card.cancelBtn.removeClass("pkm-rag-hidden");
+    card.logEl.removeClass("pkm-rag-hidden");
+    card.logEl.setText("");
+    card.statusEl.setText("Updating...");
+    card.statusEl.className = "pkm-rag-wizard-status pkm-rag-wizard-status-installing";
+    const client = this.getClient(id);
+    const append = (chunk) => {
+      card.logEl.setText(card.logEl.getText() + chunk);
+      card.logEl.scrollTop = card.logEl.scrollHeight;
+    };
+    try {
+      for (const commandId of commandIds) {
+        append(`
+$ ${tool.binaryName} ${commandId}
+`);
+        const handle = await client.runCommandStreaming(commandId, {}, append, append);
+        this.activeUpdates[id] = handle;
+        const result = await handle.done;
+        delete this.activeUpdates[id];
+        if (result.code !== 0) {
+          new import_obsidian2.Notice(`${tool.displayName} update failed at "${commandId}" (exit ${result.code}). See the log for details.`);
+          return;
+        }
+      }
+      new import_obsidian2.Notice(`${tool.displayName} updated.`);
+    } catch (error) {
+      append(`
+[cancelled or failed: ${error.message}]
+`);
+    } finally {
+      delete this.activeUpdates[id];
       card.cancelBtn.addClass("pkm-rag-hidden");
       card.installBtn.disabled = !this.nodeAvailable;
       await this.refreshStatus(id);
@@ -1707,6 +1914,45 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
       this.renderSearchDefaultField(body, id, flag);
     }
   }
+  /** Non-destructive, streaming "infra" commands (index/embed/caption/... ) — the pool the
+   *  setup wizard's "Update" button is allowed to chain. Destructive commands (cleanup,
+   *  classifier retrain, etc.) are never offered here since Update runs unattended. */
+  getUpdateCommandCandidates(tool) {
+    return tool.schema.commands.filter(
+      (c) => c.category === "infra" && c.executionMode === "streaming" && !c.destructive
+    );
+  }
+  /** One collapsed-by-default section per tool: a toggle per eligible command, in schema
+   *  order, controlling which commands the setup wizard's "Update" button runs and in
+   *  what sequence (fixed to schema order rather than user-reorderable, to keep this simple
+   *  while still guaranteeing e.g. "index" always runs before "embed"). */
+  renderUpdateCommandsForTool(containerEl, id) {
+    var _a, _b;
+    const tool = TOOLS[id];
+    const candidates = this.getUpdateCommandCandidates(tool);
+    if (candidates.length === 0)
+      return;
+    const details = containerEl.createEl("details", { cls: "pkm-rag-search-defaults" });
+    details.createEl("summary", { text: `${tool.displayName} update sequence` });
+    const body = details.createDiv();
+    body.createEl("p", {
+      text: `Commands run in this order, ${tool.binaryName} ${candidates[0].argvPath.join(" ")} first, when "Update" is clicked in the setup wizard.`,
+      cls: "setting-item-description"
+    });
+    const selected = new Set((_a = this.plugin.settings.toolUpdateCommands[id]) != null ? _a : []);
+    for (const command of candidates) {
+      new import_obsidian3.Setting(body).setName(command.label).setDesc((_b = command.description) != null ? _b : command.argvPath.join(" ")).addToggle(
+        (toggle) => toggle.setValue(selected.has(command.id)).onChange(async (value) => {
+          if (value)
+            selected.add(command.id);
+          else
+            selected.delete(command.id);
+          this.plugin.settings.toolUpdateCommands[id] = candidates.filter((c) => selected.has(c.id)).map((c) => c.id);
+          await this.plugin.saveSettings();
+        })
+      );
+    }
+  }
   display() {
     const { containerEl } = this;
     containerEl.empty();
@@ -1736,6 +1982,14 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
     });
     for (const id of Object.keys(TOOLS)) {
       this.renderSearchDefaultsForTool(containerEl, id);
+    }
+    containerEl.createEl("h3", { text: "Update Command Sequences" });
+    containerEl.createEl("p", {
+      text: 'Choose which maintenance commands run, and in what order, when you click "Update" for a tool in the setup wizard.',
+      cls: "setting-item-description"
+    });
+    for (const id of Object.keys(TOOLS)) {
+      this.renderUpdateCommandsForTool(containerEl, id);
     }
     containerEl.createEl("h3", { text: "Ollama (Chat)" });
     this.addTextSetting(
@@ -1925,127 +2179,6 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
         })
       );
     }
-  }
-};
-
-// src/cli/genericClient.ts
-var JSON_OUTPUT_VALUE_KEY = "__outputJson";
-var DEFAULT_TIMEOUT_MS = 3e4;
-function buildArgv(command, values) {
-  const argv = [...command.argvPath];
-  for (const positional of command.positionals) {
-    const value = values[positional.name];
-    if (value === void 0 || value === null || value === "") {
-      if (positional.required) {
-        throw new Error(`Missing required argument: ${positional.label}`);
-      }
-      continue;
-    }
-    argv.push(String(value));
-  }
-  for (const flag of command.flags) {
-    const value = values[flag.flag];
-    if (value === void 0 || value === null)
-      continue;
-    if (flag.type === "boolean") {
-      if (value === true)
-        argv.push(flag.flag);
-      continue;
-    }
-    if (flag.repeatable) {
-      const items = Array.isArray(value) ? value : [value];
-      for (const item of items) {
-        if (item === void 0 || item === null || item === "")
-          continue;
-        argv.push(flag.flag, String(item));
-      }
-      continue;
-    }
-    if (value === "")
-      continue;
-    argv.push(flag.flag, String(value));
-  }
-  if (command.jsonFlag && values[JSON_OUTPUT_VALUE_KEY] === true) {
-    argv.push(command.jsonFlag);
-  }
-  return argv;
-}
-function attachJson(command, argv, result) {
-  if (!command.jsonFlag || !argv.includes(command.jsonFlag))
-    return result;
-  try {
-    return { ...result, json: JSON.parse(result.stdout) };
-  } catch (e) {
-    return result;
-  }
-}
-var GenericCliClient = class {
-  constructor(binaryName, healthCheckCommand, schema, overridePath, defaultTimeoutMs = DEFAULT_TIMEOUT_MS) {
-    this.binaryName = binaryName;
-    this.healthCheckCommand = healthCheckCommand;
-    this.schema = schema;
-    this.overridePath = overridePath;
-    this.defaultTimeoutMs = defaultTimeoutMs;
-    this.runner = new CliRunner();
-  }
-  updatePath(overridePath) {
-    this.overridePath = overridePath;
-  }
-  updateDefaultTimeout(timeoutMs) {
-    this.defaultTimeoutMs = timeoutMs;
-  }
-  async isAvailable() {
-    const result = await this.detect();
-    return result.status === "healthy";
-  }
-  detect() {
-    return detectBinary(this.binaryName, this.healthCheckCommand, this.overridePath);
-  }
-  getCommand(commandId) {
-    const command = this.schema.commands.find((c) => c.id === commandId);
-    if (!command)
-      throw new Error(`Unknown command "${commandId}" for tool "${this.schema.id}"`);
-    return command;
-  }
-  listCommands() {
-    return this.schema.commands;
-  }
-  buildArgvPreview(commandId, values) {
-    return buildArgv(this.getCommand(commandId), values);
-  }
-  /** Buffered execution: waits for the process to exit and returns the full result. */
-  async runCommand(commandId, values = {}, timeoutMs) {
-    const command = this.getCommand(commandId);
-    const argv = buildArgv(command, values);
-    const env = await buildAugmentedEnv();
-    const bin = resolveExecutableTarget(this.binaryName, this.overridePath);
-    const result = await this.runner.run(bin, argv, {
-      env,
-      timeoutMs: timeoutMs != null ? timeoutMs : this.defaultTimeoutMs
-    });
-    return attachJson(command, argv, result);
-  }
-  /** Streaming execution: returns a handle with kill() immediately, output arrives via callbacks. */
-  async runCommandStreaming(commandId, values = {}, onStdout, onStderr) {
-    const command = this.getCommand(commandId);
-    const argv = buildArgv(command, values);
-    const env = await buildAugmentedEnv();
-    const bin = resolveExecutableTarget(this.binaryName, this.overridePath);
-    let stdout = "";
-    let stderr = "";
-    const handle = this.runner.runStreaming(bin, argv, {
-      env,
-      onStdout: (chunk) => {
-        stdout += chunk;
-        onStdout == null ? void 0 : onStdout(chunk);
-      },
-      onStderr: (chunk) => {
-        stderr += chunk;
-        onStderr == null ? void 0 : onStderr(chunk);
-      }
-    });
-    const done = handle.promise.then(({ code }) => attachJson(command, argv, { stdout, stderr, code }));
-    return { kill: handle.kill, done, argv, command };
   }
 };
 

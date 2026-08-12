@@ -3,7 +3,7 @@ import type PkmRagPlugin from "./main";
 import { OllamaChatClient } from "./ollama/chatClient";
 import { TOOLS } from "./cli/toolRegistry";
 import { detectBinary } from "./cli/binaryResolver";
-import { DetectResult, FlagSpec, ToolId } from "./cli/types";
+import { DetectResult, FlagSpec, ToolDefinition, ToolId } from "./cli/types";
 import { SetupWizardModal } from "./views/setupWizardModal";
 import { getSearchFlags } from "./cli/searchFlags";
 
@@ -163,6 +163,51 @@ export class PkmRagSettingTab extends PluginSettingTab {
 		}
 	}
 
+	/** Non-destructive, streaming "infra" commands (index/embed/caption/... ) — the pool the
+	 *  setup wizard's "Update" button is allowed to chain. Destructive commands (cleanup,
+	 *  classifier retrain, etc.) are never offered here since Update runs unattended. */
+	private getUpdateCommandCandidates(tool: ToolDefinition) {
+		return tool.schema.commands.filter(
+			(c) => c.category === "infra" && c.executionMode === "streaming" && !c.destructive
+		);
+	}
+
+	/** One collapsed-by-default section per tool: a toggle per eligible command, in schema
+	 *  order, controlling which commands the setup wizard's "Update" button runs and in
+	 *  what sequence (fixed to schema order rather than user-reorderable, to keep this simple
+	 *  while still guaranteeing e.g. "index" always runs before "embed"). */
+	private renderUpdateCommandsForTool(containerEl: HTMLElement, id: ToolId): void {
+		const tool = TOOLS[id];
+		const candidates = this.getUpdateCommandCandidates(tool);
+		if (candidates.length === 0) return;
+
+		const details = containerEl.createEl("details", { cls: "pkm-rag-search-defaults" });
+		details.createEl("summary", { text: `${tool.displayName} update sequence` });
+		const body = details.createDiv();
+		body.createEl("p", {
+			text: `Commands run in this order, ${tool.binaryName} ${candidates[0].argvPath.join(" ")} first, when "Update" is clicked in the setup wizard.`,
+			cls: "setting-item-description",
+		});
+
+		const selected = new Set(this.plugin.settings.toolUpdateCommands[id] ?? []);
+
+		for (const command of candidates) {
+			new Setting(body)
+				.setName(command.label)
+				.setDesc(command.description ?? command.argvPath.join(" "))
+				.addToggle((toggle) =>
+					toggle.setValue(selected.has(command.id)).onChange(async (value) => {
+						if (value) selected.add(command.id);
+						else selected.delete(command.id);
+						this.plugin.settings.toolUpdateCommands[id] = candidates
+							.filter((c) => selected.has(c.id))
+							.map((c) => c.id);
+						await this.plugin.saveSettings();
+					})
+				);
+		}
+	}
+
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
@@ -193,6 +238,17 @@ export class PkmRagSettingTab extends PluginSettingTab {
 
 		for (const id of Object.keys(TOOLS) as ToolId[]) {
 			this.renderSearchDefaultsForTool(containerEl, id);
+		}
+
+		// --- Update Command Sequences ---
+		containerEl.createEl("h3", { text: "Update Command Sequences" });
+		containerEl.createEl("p", {
+			text: "Choose which maintenance commands run, and in what order, when you click \"Update\" for a tool in the setup wizard.",
+			cls: "setting-item-description",
+		});
+
+		for (const id of Object.keys(TOOLS) as ToolId[]) {
+			this.renderUpdateCommandsForTool(containerEl, id);
 		}
 
 		// --- Ollama Connection ---

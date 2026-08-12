@@ -42,6 +42,10 @@ export interface PkmRagSettings {
 	 *  command schema's own hardcoded default when set. */
 	toolFlagDefaults: Record<ToolId, Record<string, string>>;
 
+	/** Ordered command IDs run in sequence by the setup wizard's per-tool "Update" button
+	 *  (e.g. qmd's ["index", "embed"]). Configurable in Settings → Update Command Sequences. */
+	toolUpdateCommands: Record<ToolId, string[]>;
+
 	defaultCollection: string;
 }
 
@@ -68,6 +72,12 @@ export const DEFAULT_SETTINGS: PkmRagSettings = {
 	commandTimeoutMs: DEFAULTS.DEFAULT_COMMAND_TIMEOUT_MS,
 	setupWizardShown: false,
 	toolFlagDefaults: Object.fromEntries(TOOL_IDS.map((id) => [id, {}])) as Record<ToolId, Record<string, string>>,
+	toolUpdateCommands: {
+		qmd: ["index", "embed"],
+		qimg: ["index", "caption", "ocr", "embed"],
+		qnode: ["index", "metrics.compute"],
+		qvoid: ["index", "classify", "embed"],
+	},
 
 	defaultCollection: DEFAULTS.QMD_DEFAULT_COLLECTION,
 };
