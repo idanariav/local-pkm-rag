@@ -8938,6 +8938,79 @@ function createNoteSelector(container, titles, placeholder, multiple, onChange) 
   };
 }
 
+// src/views/fileLink.ts
+var hoverParent = { hoverPopover: null };
+function normalizeForMatch(s) {
+  let decoded = s;
+  try {
+    decoded = decodeURIComponent(s);
+  } catch (e) {
+  }
+  return decoded.normalize("NFC").toLowerCase();
+}
+function slugKey(s) {
+  return normalizeForMatch(s).replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]+/gi, "");
+}
+function resolveVaultFile(app, rawRef) {
+  const allFiles = app.vault.getFiles();
+  const normalizedRawRef = normalizeForMatch(rawRef);
+  for (const file of allFiles) {
+    const normalizedPath = normalizeForMatch(file.path);
+    if (normalizedRawRef.endsWith(normalizedPath) || normalizedPath.endsWith(normalizedRawRef) || normalizedPath === normalizedRawRef) {
+      return file;
+    }
+  }
+  const rawBasename = rawRef.split("/").pop() || rawRef;
+  const basename2 = normalizeForMatch(rawBasename);
+  for (const file of allFiles) {
+    if (normalizeForMatch(file.name) === basename2)
+      return file;
+  }
+  const basenameSlug = slugKey(rawBasename);
+  if (basenameSlug) {
+    for (const file of allFiles) {
+      if (slugKey(file.name) === basenameSlug)
+        return file;
+    }
+  }
+  console.warn(`[pkm-rag] Could not resolve "${rawRef}" to a vault file.`);
+  return null;
+}
+function toWikilink(file, displayText) {
+  const linkPath = file.extension === "md" ? file.path.slice(0, -3) : file.path;
+  const safeDisplay = displayText.replace(/[[\]]/g, "").trim() || file.basename;
+  return `[[${linkPath}|${safeDisplay}]]`;
+}
+async function renderFileLink(container, app, component, rawRef, displayText) {
+  const file = resolveVaultFile(app, rawRef);
+  if (!file) {
+    container.createSpan({
+      text: displayText,
+      cls: "pkm-rag-console-result-unresolved",
+      attr: { title: `Could not match to a vault file: ${rawRef}` }
+    });
+    return;
+  }
+  await renderMarkdown(toWikilink(file, displayText), container, app, component);
+  const link = container.querySelector("a.internal-link");
+  if (!link)
+    return;
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    void app.workspace.openLinkText(file.path, "");
+  });
+  link.addEventListener("mouseover", (event) => {
+    app.workspace.trigger("hover-link", {
+      event,
+      source: "pkm-rag",
+      hoverParent,
+      targetEl: link,
+      linktext: file.path,
+      sourcePath: file.path
+    });
+  });
+}
+
 // src/views/relatedNotesView.ts
 var RELATED_NOTES_VIEW_TYPE = "pkm-rag-related-notes";
 var RelatedNotesView = class extends import_obsidian6.ItemView {
@@ -9049,18 +9122,7 @@ var RelatedNotesView = class extends import_obsidian6.ItemView {
         const titleRow = noteEl.createDiv({
           cls: "pkm-rag-similar-title-row"
         });
-        const titleEl = titleRow.createEl("a", {
-          text: note.title,
-          cls: "pkm-rag-similar-title"
-        });
-        titleEl.addEventListener("click", (e) => {
-          e.preventDefault();
-          if (note.filePath) {
-            this.app.workspace.openLinkText(note.filePath, "");
-          } else {
-            this.app.workspace.openLinkText(note.title, "");
-          }
-        });
+        await renderFileLink(titleRow, this.app, this, note.filePath || note.title, note.title);
         titleRow.createEl("span", {
           text: `${Math.round(note.similarity * 100)}%`,
           cls: "pkm-rag-similar-score"
@@ -10126,50 +10188,7 @@ var NORMALIZERS = {
   qimg: normalizeQimgResult
 };
 
-// src/views/fileLink.ts
-function resolveVaultFile(app, rawRef) {
-  const allFiles = app.vault.getFiles();
-  for (const file of allFiles) {
-    if (rawRef.endsWith(file.path) || file.path.endsWith(rawRef) || file.path === rawRef) {
-      return file;
-    }
-  }
-  const basename2 = rawRef.split("/").pop() || rawRef;
-  for (const file of allFiles) {
-    if (file.name === basename2)
-      return file;
-  }
-  return null;
-}
-function renderFileLink(container, app, hoverParent, hoverSource, rawRef, displayText) {
-  const file = resolveVaultFile(app, rawRef);
-  if (!file) {
-    container.createSpan({ text: displayText, cls: "pkm-rag-console-result-unresolved" });
-    return;
-  }
-  const link = container.createEl("a", {
-    text: displayText,
-    cls: "pkm-rag-console-result-link internal-link",
-    href: file.path
-  });
-  link.addEventListener("click", (event) => {
-    event.preventDefault();
-    void app.workspace.openLinkText(file.path, "");
-  });
-  link.addEventListener("mouseover", (event) => {
-    app.workspace.trigger("hover-link", {
-      event,
-      source: hoverSource,
-      hoverParent,
-      targetEl: link,
-      linktext: file.path,
-      sourcePath: file.path
-    });
-  });
-}
-
 // src/views/cliConsoleView.ts
-var CLI_CONSOLE_HOVER_SOURCE = "pkm-rag-cli-console";
 var COLLECTION_SUGGESTIONS_SUPPORTED = ["qmd", "qimg"];
 var CATEGORY_TABS = [
   { id: "search", label: "Search" },
@@ -10202,7 +10221,6 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
     this.currentCommand = null;
     this.values = {};
     this.activeKill = null;
-    this.hoverPopover = null;
     this.plugin = plugin;
   }
   getViewType() {
@@ -10523,7 +10541,7 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
           (chunk) => this.appendOutput(chunk)
         );
         this.activeKill = handle.kill;
-        this.finishOutput(await handle.done);
+        await this.finishOutput(await handle.done);
       } catch (error) {
         this.outputEl.setText(`Error: ${error.message}`);
       } finally {
@@ -10534,7 +10552,7 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       return;
     }
     try {
-      this.finishOutput(await client.runCommand(command.id, this.values));
+      await this.finishOutput(await client.runCommand(command.id, this.values));
     } catch (error) {
       this.outputEl.setText(`Error: ${error.message}`);
     } finally {
@@ -10544,11 +10562,11 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
   appendOutput(chunk) {
     this.outputEl.setText(this.outputEl.getText() + chunk);
   }
-  finishOutput(result) {
+  async finishOutput(result) {
     if (result.json !== void 0) {
       const normalized = normalizeResults(this.currentTool, result.json);
       if (normalized) {
-        this.renderResultCards(normalized);
+        await this.renderResultCards(normalized);
         return;
       }
       this.outputEl.setText(JSON.stringify(result.json, null, 2));
@@ -10557,17 +10575,19 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
     const parts = [result.stdout, result.stderr].filter(Boolean);
     this.outputEl.setText(parts.join("\n---stderr---\n") || `(no output, exit code ${result.code})`);
   }
-  /** Renders search-style results as clickable cards with native Obsidian hover-preview
-   *  links, instead of a raw JSON dump — the file link behaves exactly like a normal
-   *  markdown wikilink (click to open, hover to preview, images included). */
-  renderResultCards(results) {
+  /** Renders search-style results as real Obsidian wikilinks instead of a raw JSON dump —
+   *  click-to-open and native hover-preview (images included) come from Obsidian's own
+   *  link rendering, not custom event wiring. Rendered one at a time (not fired in
+   *  parallel) since concurrent MarkdownRenderer.render calls into different containers
+   *  are not reliable — only the first tended to actually render. */
+  async renderResultCards(results) {
     this.outputEl.addClass("pkm-rag-hidden");
     this.resultsEl.removeClass("pkm-rag-hidden");
     this.resultsEl.empty();
     for (const result of results) {
       const card = this.resultsEl.createDiv({ cls: "pkm-rag-console-result-card" });
       const titleRow = card.createDiv({ cls: "pkm-rag-console-result-title-row" });
-      renderFileLink(titleRow, this.app, this, CLI_CONSOLE_HOVER_SOURCE, result.fileRef, result.title);
+      await renderFileLink(titleRow, this.app, this, result.fileRef, result.title);
       if (result.score !== void 0) {
         titleRow.createSpan({ text: result.score.toFixed(2), cls: "pkm-rag-console-result-score" });
       }
@@ -10602,10 +10622,7 @@ var PkmRagPlugin = class extends import_obsidian10.Plugin {
     this.registerView(RELATED_NOTES_VIEW_TYPE, (leaf) => new RelatedNotesView(leaf, this));
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
     this.registerView(CLI_CONSOLE_VIEW_TYPE, (leaf) => new CliConsoleView(leaf, this));
-    this.registerHoverLinkSource(CLI_CONSOLE_HOVER_SOURCE, {
-      display: "PKM RAG CLI Console",
-      defaultMod: false
-    });
+    this.registerHoverLinkSource("pkm-rag", { display: "PKM RAG", defaultMod: false });
     this.addSettingTab(new PkmRagSettingTab(this.app, this));
     this.addCommand({
       id: "show-related",

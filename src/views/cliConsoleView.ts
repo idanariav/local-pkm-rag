@@ -1,4 +1,4 @@
-import { App, HoverParent, HoverPopover, ItemView, WorkspaceLeaf, Setting, Notice, Modal } from "obsidian";
+import { App, ItemView, WorkspaceLeaf, Setting, Notice, Modal } from "obsidian";
 import type PkmRagPlugin from "../main";
 import { TOOLS } from "../cli/toolRegistry";
 import { GenericCliClient, JSON_OUTPUT_VALUE_KEY, CommandResult } from "../cli/genericClient";
@@ -6,8 +6,6 @@ import { CommandCategory, CommandNode, FlagSpec, PositionalArgSpec, ToolId } fro
 import { parseCollectionNames } from "../cli/collectionNames";
 import { normalizeResults, NormalizedResult } from "../cli/resultNormalizer";
 import { renderFileLink } from "./fileLink";
-
-export const CLI_CONSOLE_HOVER_SOURCE = "pkm-rag-cli-console";
 
 /** Tools whose `collection list` output we know how to parse into plain names for
  *  live chip suggestions. Extend as more tools get this treatment. */
@@ -40,7 +38,7 @@ class ConfirmRunModal extends Modal {
 /** Schema-driven generic command console: pick a tool, pick a command, fill in a
  *  generated form, run it. The same plumbing (GenericCliClient + per-tool schema)
  *  works for all four tools; only qmd has a fully populated schema this round. */
-export class CliConsoleView extends ItemView implements HoverParent {
+export class CliConsoleView extends ItemView {
 	private readonly plugin: PkmRagPlugin;
 	private readonly clients: Partial<Record<ToolId, GenericCliClient>> = {};
 	private currentTool: ToolId = "qmd";
@@ -48,7 +46,6 @@ export class CliConsoleView extends ItemView implements HoverParent {
 	private currentCommand: CommandNode | null = null;
 	private values: Record<string, unknown> = {};
 	private activeKill: (() => void) | null = null;
-	hoverPopover: HoverPopover | null = null;
 
 	private formEl!: HTMLElement;
 	private outputEl!: HTMLElement;
@@ -417,7 +414,7 @@ export class CliConsoleView extends ItemView implements HoverParent {
 					(chunk) => this.appendOutput(chunk)
 				);
 				this.activeKill = handle.kill;
-				this.finishOutput(await handle.done);
+				await this.finishOutput(await handle.done);
 			} catch (error) {
 				this.outputEl.setText(`Error: ${(error as Error).message}`);
 			} finally {
@@ -429,7 +426,7 @@ export class CliConsoleView extends ItemView implements HoverParent {
 		}
 
 		try {
-			this.finishOutput(await client.runCommand(command.id, this.values));
+			await this.finishOutput(await client.runCommand(command.id, this.values));
 		} catch (error) {
 			this.outputEl.setText(`Error: ${(error as Error).message}`);
 		} finally {
@@ -441,11 +438,11 @@ export class CliConsoleView extends ItemView implements HoverParent {
 		this.outputEl.setText(this.outputEl.getText() + chunk);
 	}
 
-	private finishOutput(result: CommandResult): void {
+	private async finishOutput(result: CommandResult): Promise<void> {
 		if (result.json !== undefined) {
 			const normalized = normalizeResults(this.currentTool, result.json);
 			if (normalized) {
-				this.renderResultCards(normalized);
+				await this.renderResultCards(normalized);
 				return;
 			}
 			this.outputEl.setText(JSON.stringify(result.json, null, 2));
@@ -455,10 +452,12 @@ export class CliConsoleView extends ItemView implements HoverParent {
 		this.outputEl.setText(parts.join("\n---stderr---\n") || `(no output, exit code ${result.code})`);
 	}
 
-	/** Renders search-style results as clickable cards with native Obsidian hover-preview
-	 *  links, instead of a raw JSON dump — the file link behaves exactly like a normal
-	 *  markdown wikilink (click to open, hover to preview, images included). */
-	private renderResultCards(results: NormalizedResult[]): void {
+	/** Renders search-style results as real Obsidian wikilinks instead of a raw JSON dump —
+	 *  click-to-open and native hover-preview (images included) come from Obsidian's own
+	 *  link rendering, not custom event wiring. Rendered one at a time (not fired in
+	 *  parallel) since concurrent MarkdownRenderer.render calls into different containers
+	 *  are not reliable — only the first tended to actually render. */
+	private async renderResultCards(results: NormalizedResult[]): Promise<void> {
 		this.outputEl.addClass("pkm-rag-hidden");
 		this.resultsEl.removeClass("pkm-rag-hidden");
 		this.resultsEl.empty();
@@ -466,7 +465,7 @@ export class CliConsoleView extends ItemView implements HoverParent {
 		for (const result of results) {
 			const card = this.resultsEl.createDiv({ cls: "pkm-rag-console-result-card" });
 			const titleRow = card.createDiv({ cls: "pkm-rag-console-result-title-row" });
-			renderFileLink(titleRow, this.app, this, CLI_CONSOLE_HOVER_SOURCE, result.fileRef, result.title);
+			await renderFileLink(titleRow, this.app, this, result.fileRef, result.title);
 			if (result.score !== undefined) {
 				titleRow.createSpan({ text: result.score.toFixed(2), cls: "pkm-rag-console-result-score" });
 			}

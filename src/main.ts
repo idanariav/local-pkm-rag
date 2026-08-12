@@ -6,7 +6,7 @@ import { OllamaChatClient } from "./ollama/chatClient";
 import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from "./views/relatedNotesView";
 import { ChatView, CHAT_VIEW_TYPE } from "./views/chatView";
 import { SetupWizardModal } from "./views/setupWizardModal";
-import { CliConsoleView, CLI_CONSOLE_VIEW_TYPE, CLI_CONSOLE_HOVER_SOURCE } from "./views/cliConsoleView";
+import { CliConsoleView, CLI_CONSOLE_VIEW_TYPE } from "./views/cliConsoleView";
 import { TOOLS } from "./cli/toolRegistry";
 import { detectBinary } from "./cli/binaryResolver";
 import { DetectResult, ToolId } from "./cli/types";
@@ -36,10 +36,7 @@ export default class PkmRagPlugin extends Plugin {
 		this.registerView(RELATED_NOTES_VIEW_TYPE, (leaf) => new RelatedNotesView(leaf, this));
 		this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
 		this.registerView(CLI_CONSOLE_VIEW_TYPE, (leaf) => new CliConsoleView(leaf, this));
-		this.registerHoverLinkSource(CLI_CONSOLE_HOVER_SOURCE, {
-			display: "PKM RAG CLI Console",
-			defaultMod: false,
-		});
+		this.registerHoverLinkSource("pkm-rag", { display: "PKM RAG", defaultMod: false });
 
 		// Add settings tab
 		this.addSettingTab(new PkmRagSettingTab(this.app, this));

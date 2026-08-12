@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf } from "obsidian";
 import type PkmRagPlugin from "../main";
 import { findSimilarNotes } from "../rag/retrieval";
 import { createCollectionFilter } from "./components";
+import { renderFileLink } from "./fileLink";
 
 export const RELATED_NOTES_VIEW_TYPE = "pkm-rag-related-notes";
 
@@ -139,18 +140,7 @@ export class RelatedNotesView extends ItemView {
 					cls: "pkm-rag-similar-title-row",
 				});
 
-				const titleEl = titleRow.createEl("a", {
-					text: note.title,
-					cls: "pkm-rag-similar-title",
-				});
-				titleEl.addEventListener("click", (e) => {
-					e.preventDefault();
-					if (note.filePath) {
-						this.app.workspace.openLinkText(note.filePath, "");
-					} else {
-						this.app.workspace.openLinkText(note.title, "");
-					}
-				});
+				await renderFileLink(titleRow, this.app, this, note.filePath || note.title, note.title);
 
 				titleRow.createEl("span", {
 					text: `${Math.round(note.similarity * 100)}%`,

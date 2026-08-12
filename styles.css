@@ -63,16 +63,9 @@
 	align-items: baseline;
 }
 
-.pkm-rag-similar-title {
+.pkm-rag-similar-title-row p {
+	margin: 0;
 	font-weight: 600;
-	color: var(--text-normal);
-	text-decoration: none;
-	cursor: pointer;
-}
-
-.pkm-rag-similar-title:hover {
-	color: var(--text-accent);
-	text-decoration: underline;
 }
 
 .pkm-rag-similar-score {
@@ -559,7 +552,8 @@
 	gap: 8px;
 }
 
-.pkm-rag-console-result-link {
+.pkm-rag-console-result-title-row p {
+	margin: 0;
 	font-weight: 500;
 }
 
