@@ -4,12 +4,18 @@ import { TOOLS } from "../cli/toolRegistry";
 import { GenericCliClient, JSON_OUTPUT_VALUE_KEY, CommandResult } from "../cli/genericClient";
 import { CommandCategory, CommandNode, FlagSpec, PositionalArgSpec, ToolId } from "../cli/types";
 import { parseCollectionNames } from "../cli/collectionNames";
-import { normalizeResults, NormalizedResult } from "../cli/resultNormalizer";
+import { normalizeResults, normalizeQvoidQueryNdjson, NormalizedResult } from "../cli/resultNormalizer";
 import { renderFileLink } from "./fileLink";
 
-/** Tools whose `collection list` output we know how to parse into plain names for
- *  live chip suggestions. Extend as more tools get this treatment. */
-const COLLECTION_SUGGESTIONS_SUPPORTED: ToolId[] = ["qmd", "qimg"];
+/** Tools whose collection-listing output we know how to parse into plain names for
+ *  live chip suggestions, and which command lists them (qvoid's is "collections",
+ *  not "collection.list" like the other three). */
+const COLLECTION_LIST_COMMAND_ID: Partial<Record<ToolId, string>> = {
+	qmd: "collection.list",
+	qimg: "collection.list",
+	qnode: "collection.list",
+	qvoid: "collections",
+};
 
 const CATEGORY_TABS: { id: CommandCategory; label: string }[] = [
 	{ id: "search", label: "Search" },
@@ -268,9 +274,19 @@ export class CliConsoleView extends ItemView {
 		);
 	}
 
+	/** A user-configured default (Settings → Search Parameter Defaults) takes priority
+	 *  over the command schema's own hardcoded default when both are present. */
+	private getEffectiveDefault(flag: FlagSpec): string | undefined {
+		const configured = this.plugin.settings.toolFlagDefaults[this.currentTool]?.[flag.flag];
+		if (configured !== undefined && configured !== "") return configured;
+		return flag.default !== undefined ? String(flag.default) : undefined;
+	}
+
 	private renderFlagField(flag: FlagSpec, container: HTMLElement): void {
+		const effectiveDefault = this.getEffectiveDefault(flag);
+
 		if (flag.type === "boolean") {
-			const initial = !!flag.default;
+			const initial = effectiveDefault === "true";
 			this.values[flag.flag] = initial;
 			new Setting(container).setName(flag.label).setDesc(flag.description ?? "").addToggle((toggle) =>
 				toggle.setValue(initial).onChange((v) => {
@@ -286,11 +302,11 @@ export class CliConsoleView extends ItemView {
 		}
 
 		if (flag.type === "enum" && flag.enumValues) {
-			if (flag.default !== undefined) this.values[flag.flag] = String(flag.default);
+			if (effectiveDefault !== undefined) this.values[flag.flag] = effectiveDefault;
 			new Setting(container).setName(flag.label).setDesc(flag.description ?? "").addDropdown((dd) => {
 				dd.addOption("", "—");
 				for (const v of flag.enumValues as string[]) dd.addOption(v, v);
-				if (flag.default !== undefined) dd.setValue(String(flag.default));
+				if (effectiveDefault !== undefined) dd.setValue(effectiveDefault);
 				dd.onChange((v) => {
 					this.values[flag.flag] = v || undefined;
 				});
@@ -298,11 +314,11 @@ export class CliConsoleView extends ItemView {
 			return;
 		}
 
-		if (flag.default !== undefined) {
-			this.values[flag.flag] = flag.type === "number" ? Number(flag.default) : flag.default;
+		if (effectiveDefault !== undefined) {
+			this.values[flag.flag] = flag.type === "number" ? Number(effectiveDefault) : effectiveDefault;
 		}
 		new Setting(container).setName(flag.label).setDesc(flag.description ?? "").addText((text) => {
-			if (flag.default !== undefined) text.setValue(String(flag.default));
+			if (effectiveDefault !== undefined) text.setValue(effectiveDefault);
 			text.onChange((v) => {
 				this.values[flag.flag] = flag.type === "number" ? (v === "" ? undefined : Number(v)) : v || undefined;
 			});
@@ -310,18 +326,19 @@ export class CliConsoleView extends ItemView {
 		});
 	}
 
-	/** For collection-like flags on tools we know how to parse `collection list` output for,
+	/** For collection-like flags on tools we know how to parse collection-listing output for,
 	 *  attach a live datalist of real collection names instead of leaving the field blank/freeform. */
 	private attachCollectionSuggestions(input: HTMLInputElement, wrapper: HTMLElement, flag: FlagSpec): void {
 		if (flag.flag !== "-c" && flag.flag !== "--collection") return;
-		if (!COLLECTION_SUGGESTIONS_SUPPORTED.includes(this.currentTool)) return;
-
-		const listId = `pkm-rag-console-collections-${this.currentTool}`;
-		const datalist = wrapper.createEl("datalist", { attr: { id: listId } });
 		const tool = this.currentTool;
+		const listCommandId = COLLECTION_LIST_COMMAND_ID[tool];
+		if (!listCommandId) return;
+
+		const listId = `pkm-rag-console-collections-${tool}`;
+		const datalist = wrapper.createEl("datalist", { attr: { id: listId } });
 		const client = this.getClient(tool);
 		void client
-			.runCommand("collection.list")
+			.runCommand(listCommandId)
 			.then((result) => {
 				const names = parseCollectionNames(tool, result.stdout);
 				datalist.empty();
@@ -340,7 +357,8 @@ export class CliConsoleView extends ItemView {
 			wrapper.createEl("p", { text: flag.description, cls: "setting-item-description" });
 		}
 
-		const items: string[] = [];
+		const effectiveDefault = this.getEffectiveDefault(flag);
+		const items: string[] = effectiveDefault ? [effectiveDefault] : [];
 		this.values[flag.flag] = items;
 
 		const chipsEl = wrapper.createDiv({ cls: "pkm-rag-chips-container" });
@@ -439,6 +457,17 @@ export class CliConsoleView extends ItemView {
 	}
 
 	private async finishOutput(result: CommandResult): Promise<void> {
+		// qvoid's `query` prints NDJSON when --format json is chosen, not a single JSON
+		// value — the generic jsonFlag/result.json path doesn't apply, since --format is
+		// an enum (summary/detailed/json), not a boolean flag like the other tools' --json.
+		if (this.currentTool === "qvoid" && this.currentCommand?.id === "query" && this.values["--format"] === "json") {
+			const normalized = normalizeQvoidQueryNdjson(result.stdout);
+			if (normalized) {
+				await this.renderResultCards(normalized);
+				return;
+			}
+		}
+
 		if (result.json !== undefined) {
 			const normalized = normalizeResults(this.currentTool, result.json);
 			if (normalized) {

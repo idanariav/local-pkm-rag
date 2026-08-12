@@ -11,9 +11,26 @@ export function parseCollectionNames(toolId: ToolId, output: string): string[] {
 			return parseQmdCollectionNames(output);
 		case "qimg":
 			return parseQimgCollectionNames(output);
-		default:
-			return [];
+		case "qnode":
+			return parseSingleLineCollectionNames(output);
+		case "qvoid":
+			return parseSingleLineCollectionNames(output);
 	}
+}
+
+/** qnode ("name\tpath\tpattern[\tvault_root=...]") and qvoid ("  name(padded)  path")
+ *  both print exactly one line per collection with no continuation lines — the name is
+ *  always the first whitespace-delimited token, verified against each tool's own
+ *  console.log call in source (qnode/src/cli/qnode.ts, qvoid/src/cli/qvoid.ts). */
+function parseSingleLineCollectionNames(output: string): string[] {
+	const names: string[] = [];
+	for (const line of output.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		const name = trimmed.split(/\s+/)[0];
+		if (name) names.push(name);
+	}
+	return names;
 }
 
 /** qmd: "name (qmd://name/)[ [excluded]]" header line, then indented detail lines. */

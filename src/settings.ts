@@ -37,6 +37,10 @@ export interface PkmRagSettings {
 	toolPaths: Record<ToolId, string>;
 	commandTimeoutMs: number;
 	setupWizardShown: boolean;
+	/** Per-tool default values for search-command flags (e.g. qmd's -n, --min-score),
+	 *  keyed by the flag string. Pre-fills the CLI console's forms; overrides the
+	 *  command schema's own hardcoded default when set. */
+	toolFlagDefaults: Record<ToolId, Record<string, string>>;
 
 	defaultCollection: string;
 }
@@ -63,6 +67,7 @@ export const DEFAULT_SETTINGS: PkmRagSettings = {
 	toolPaths: Object.fromEntries(TOOL_IDS.map((id) => [id, ""])) as Record<ToolId, string>,
 	commandTimeoutMs: DEFAULTS.DEFAULT_COMMAND_TIMEOUT_MS,
 	setupWizardShown: false,
+	toolFlagDefaults: Object.fromEntries(TOOL_IDS.map((id) => [id, {}])) as Record<ToolId, Record<string, string>>,
 
 	defaultCollection: DEFAULTS.QMD_DEFAULT_COLLECTION,
 };

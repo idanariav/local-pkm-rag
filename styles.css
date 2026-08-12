@@ -327,6 +327,26 @@
 	margin-bottom: 4px;
 }
 
+/* ===== Settings: Search Parameter Defaults ===== */
+
+.pkm-rag-search-defaults {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 4px 12px;
+	margin-bottom: 8px;
+}
+
+.pkm-rag-search-defaults summary {
+	cursor: pointer;
+	padding: 6px 0;
+	font-weight: 600;
+	user-select: none;
+}
+
+.pkm-rag-search-defaults summary:hover {
+	color: var(--text-accent);
+}
+
 /* ===== Setup Wizard ===== */
 
 .pkm-rag-wizard {

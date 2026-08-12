@@ -1049,6 +1049,7 @@ var DEFAULT_SETTINGS = {
   toolPaths: Object.fromEntries(TOOL_IDS.map((id) => [id, ""])),
   commandTimeoutMs: DEFAULTS.DEFAULT_COMMAND_TIMEOUT_MS,
   setupWizardShown: false,
+  toolFlagDefaults: Object.fromEntries(TOOL_IDS.map((id) => [id, {}])),
   defaultCollection: DEFAULTS.QMD_DEFAULT_COLLECTION
 };
 function migrateLegacySettings(settings) {
@@ -1558,6 +1559,20 @@ var SetupWizardModal = class extends import_obsidian2.Modal {
   }
 };
 
+// src/cli/searchFlags.ts
+function getSearchFlags(schema) {
+  const seen = /* @__PURE__ */ new Map();
+  for (const command of schema.commands) {
+    if (command.category !== "search")
+      continue;
+    for (const flag of command.flags) {
+      if (!seen.has(flag.flag))
+        seen.set(flag.flag, flag);
+    }
+  }
+  return Array.from(seen.values());
+}
+
 // src/settingsTab.ts
 var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
   constructor(app, plugin) {
@@ -1619,6 +1634,61 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
       })
     );
   }
+  /** Resolves the current default (empty string = unset) for a search flag in settings. */
+  getFlagDefault(id, flag) {
+    var _a, _b;
+    return (_b = (_a = this.plugin.settings.toolFlagDefaults[id]) == null ? void 0 : _a[flag.flag]) != null ? _b : "";
+  }
+  async setFlagDefault(id, flag, value) {
+    if (!this.plugin.settings.toolFlagDefaults[id])
+      this.plugin.settings.toolFlagDefaults[id] = {};
+    if (value === "") {
+      delete this.plugin.settings.toolFlagDefaults[id][flag.flag];
+    } else {
+      this.plugin.settings.toolFlagDefaults[id][flag.flag] = value;
+    }
+    await this.plugin.saveSettings();
+  }
+  /** Type-aware field for one search flag's configured default: toggle for booleans,
+   *  dropdown for enums, text otherwise. Empty/unset means "use the command's own default." */
+  renderSearchDefaultField(container, id, flag) {
+    var _a;
+    const current = this.getFlagDefault(id, flag);
+    const setting = new import_obsidian3.Setting(container).setName(flag.label).setDesc((_a = flag.description) != null ? _a : flag.flag);
+    if (flag.type === "boolean") {
+      setting.addToggle(
+        (toggle) => toggle.setValue(current === "true").onChange((v) => this.setFlagDefault(id, flag, v ? "true" : ""))
+      );
+      return;
+    }
+    if (flag.type === "enum" && flag.enumValues) {
+      setting.addDropdown((dd) => {
+        dd.addOption("", "(use command default)");
+        for (const v of flag.enumValues)
+          dd.addOption(v, v);
+        dd.setValue(current);
+        dd.onChange((v) => this.setFlagDefault(id, flag, v));
+      });
+      return;
+    }
+    setting.addText(
+      (text3) => text3.setPlaceholder(flag.default !== void 0 ? String(flag.default) : "").setValue(current).onChange((v) => this.setFlagDefault(id, flag, v.trim()))
+    );
+  }
+  /** One collapsed-by-default section per tool listing every unique flag across its
+   *  search commands, so users can pre-fill values they'd otherwise retype every run. */
+  renderSearchDefaultsForTool(containerEl, id) {
+    const tool = TOOLS[id];
+    const flags = getSearchFlags(tool.schema);
+    if (flags.length === 0)
+      return;
+    const details = containerEl.createEl("details", { cls: "pkm-rag-search-defaults" });
+    details.createEl("summary", { text: `${tool.displayName} (${flags.length} parameters)` });
+    const body = details.createDiv();
+    for (const flag of flags) {
+      this.renderSearchDefaultField(body, id, flag);
+    }
+  }
   display() {
     const { containerEl } = this;
     containerEl.empty();
@@ -1641,6 +1711,14 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
         this.plugin.settings.defaultCollection = v;
       }
     );
+    containerEl.createEl("h3", { text: "Search Parameter Defaults" });
+    containerEl.createEl("p", {
+      text: "Pre-fill these values in the CLI console's search forms instead of leaving them empty. Leave a field blank to use the command's own default.",
+      cls: "setting-item-description"
+    });
+    for (const id of Object.keys(TOOLS)) {
+      this.renderSearchDefaultsForTool(containerEl, id);
+    }
     containerEl.createEl("h3", { text: "Ollama (Chat)" });
     this.addTextSetting(
       containerEl,
@@ -1960,9 +2038,23 @@ function parseCollectionNames(toolId, output) {
       return parseQmdCollectionNames(output);
     case "qimg":
       return parseQimgCollectionNames(output);
-    default:
-      return [];
+    case "qnode":
+      return parseSingleLineCollectionNames(output);
+    case "qvoid":
+      return parseSingleLineCollectionNames(output);
   }
+}
+function parseSingleLineCollectionNames(output) {
+  const names = [];
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed)
+      continue;
+    const name = trimmed.split(/\s+/)[0];
+    if (name)
+      names.push(name);
+  }
+  return names;
 }
 function parseQmdCollectionNames(output) {
   const names = [];
@@ -10183,13 +10275,78 @@ function normalizeQimgResult(item) {
     score: typeof r.score === "number" ? r.score : void 0
   };
 }
+function normalizeQnodeResult(item) {
+  var _a, _b, _c;
+  const r = asRecord(item);
+  if (!r)
+    return null;
+  const fileRef = typeof r.dst_path === "string" ? r.dst_path : typeof r.path === "string" ? r.path : null;
+  if (!fileRef)
+    return null;
+  const basename2 = ((_a = fileRef.split("/").pop()) != null ? _a : fileRef).replace(/\.md$/, "");
+  const title = typeof r.dst_target === "string" && r.dst_target ? r.dst_target : basename2;
+  const subtitleParts = [];
+  if (typeof r.field_key === "string")
+    subtitleParts.push(r.field_key);
+  if (typeof r.context === "string")
+    subtitleParts.push(r.context);
+  if (subtitleParts.length === 0 && typeof r.shared_parents === "number") {
+    subtitleParts.push(`${r.shared_parents} shared parent${r.shared_parents === 1 ? "" : "s"}`);
+  }
+  if (subtitleParts.length === 0 && typeof r.pagerank === "number") {
+    subtitleParts.push(
+      `pagerank ${r.pagerank.toFixed(4)}, in-degree ${(_b = r.in_degree) != null ? _b : "?"}, out-degree ${(_c = r.out_degree) != null ? _c : "?"}`
+    );
+  }
+  return {
+    title,
+    fileRef,
+    subtitle: subtitleParts.length > 0 ? subtitleParts.join(" \u2014 ") : void 0,
+    score: typeof r.pagerank === "number" ? r.pagerank : void 0
+  };
+}
 var NORMALIZERS = {
   qmd: normalizeQmdResult,
-  qimg: normalizeQimgResult
+  qimg: normalizeQimgResult,
+  qnode: normalizeQnodeResult
 };
+function normalizeQvoidQueryNdjson(stdout) {
+  const results = [];
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed)
+      continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (e) {
+      continue;
+    }
+    const target = asRecord(parsed);
+    if (!target || typeof target.target !== "string" || !Array.isArray(target.occurrences))
+      continue;
+    for (const occurrence of target.occurrences) {
+      const occ = asRecord(occurrence);
+      if (!occ || typeof occ.source !== "string")
+        continue;
+      const contextParts = [occ.context_before, occ.context_after].filter((c) => typeof c === "string");
+      results.push({
+        title: target.target,
+        fileRef: occ.source,
+        subtitle: contextParts.length > 0 ? contextParts.join(" \u2026 ") : typeof occ.semantic_type === "string" ? occ.semantic_type : void 0
+      });
+    }
+  }
+  return results.length > 0 ? results : null;
+}
 
 // src/views/cliConsoleView.ts
-var COLLECTION_SUGGESTIONS_SUPPORTED = ["qmd", "qimg"];
+var COLLECTION_LIST_COMMAND_ID = {
+  qmd: "collection.list",
+  qimg: "collection.list",
+  qnode: "collection.list",
+  qvoid: "collections"
+};
 var CATEGORY_TABS = [
   { id: "search", label: "Search" },
   { id: "infra", label: "Setup / Infra" }
@@ -10405,10 +10562,20 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       })
     );
   }
+  /** A user-configured default (Settings → Search Parameter Defaults) takes priority
+   *  over the command schema's own hardcoded default when both are present. */
+  getEffectiveDefault(flag) {
+    var _a;
+    const configured = (_a = this.plugin.settings.toolFlagDefaults[this.currentTool]) == null ? void 0 : _a[flag.flag];
+    if (configured !== void 0 && configured !== "")
+      return configured;
+    return flag.default !== void 0 ? String(flag.default) : void 0;
+  }
   renderFlagField(flag, container) {
     var _a, _b, _c;
+    const effectiveDefault = this.getEffectiveDefault(flag);
     if (flag.type === "boolean") {
-      const initial = !!flag.default;
+      const initial = effectiveDefault === "true";
       this.values[flag.flag] = initial;
       new import_obsidian9.Setting(container).setName(flag.label).setDesc((_a = flag.description) != null ? _a : "").addToggle(
         (toggle) => toggle.setValue(initial).onChange((v) => {
@@ -10422,44 +10589,45 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       return;
     }
     if (flag.type === "enum" && flag.enumValues) {
-      if (flag.default !== void 0)
-        this.values[flag.flag] = String(flag.default);
+      if (effectiveDefault !== void 0)
+        this.values[flag.flag] = effectiveDefault;
       new import_obsidian9.Setting(container).setName(flag.label).setDesc((_b = flag.description) != null ? _b : "").addDropdown((dd) => {
         dd.addOption("", "\u2014");
         for (const v of flag.enumValues)
           dd.addOption(v, v);
-        if (flag.default !== void 0)
-          dd.setValue(String(flag.default));
+        if (effectiveDefault !== void 0)
+          dd.setValue(effectiveDefault);
         dd.onChange((v) => {
           this.values[flag.flag] = v || void 0;
         });
       });
       return;
     }
-    if (flag.default !== void 0) {
-      this.values[flag.flag] = flag.type === "number" ? Number(flag.default) : flag.default;
+    if (effectiveDefault !== void 0) {
+      this.values[flag.flag] = flag.type === "number" ? Number(effectiveDefault) : effectiveDefault;
     }
     new import_obsidian9.Setting(container).setName(flag.label).setDesc((_c = flag.description) != null ? _c : "").addText((text3) => {
-      if (flag.default !== void 0)
-        text3.setValue(String(flag.default));
+      if (effectiveDefault !== void 0)
+        text3.setValue(effectiveDefault);
       text3.onChange((v) => {
         this.values[flag.flag] = flag.type === "number" ? v === "" ? void 0 : Number(v) : v || void 0;
       });
       this.attachCollectionSuggestions(text3.inputEl, container, flag);
     });
   }
-  /** For collection-like flags on tools we know how to parse `collection list` output for,
+  /** For collection-like flags on tools we know how to parse collection-listing output for,
    *  attach a live datalist of real collection names instead of leaving the field blank/freeform. */
   attachCollectionSuggestions(input, wrapper, flag) {
     if (flag.flag !== "-c" && flag.flag !== "--collection")
       return;
-    if (!COLLECTION_SUGGESTIONS_SUPPORTED.includes(this.currentTool))
-      return;
-    const listId = `pkm-rag-console-collections-${this.currentTool}`;
-    const datalist = wrapper.createEl("datalist", { attr: { id: listId } });
     const tool = this.currentTool;
+    const listCommandId = COLLECTION_LIST_COMMAND_ID[tool];
+    if (!listCommandId)
+      return;
+    const listId = `pkm-rag-console-collections-${tool}`;
+    const datalist = wrapper.createEl("datalist", { attr: { id: listId } });
     const client = this.getClient(tool);
-    void client.runCommand("collection.list").then((result) => {
+    void client.runCommand(listCommandId).then((result) => {
       const names = parseCollectionNames(tool, result.stdout);
       datalist.empty();
       for (const name of names)
@@ -10474,7 +10642,8 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
     if (flag.description) {
       wrapper.createEl("p", { text: flag.description, cls: "setting-item-description" });
     }
-    const items = [];
+    const effectiveDefault = this.getEffectiveDefault(flag);
+    const items = effectiveDefault ? [effectiveDefault] : [];
     this.values[flag.flag] = items;
     const chipsEl = wrapper.createDiv({ cls: "pkm-rag-chips-container" });
     const renderChips = () => {
@@ -10563,6 +10732,14 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
     this.outputEl.setText(this.outputEl.getText() + chunk);
   }
   async finishOutput(result) {
+    var _a;
+    if (this.currentTool === "qvoid" && ((_a = this.currentCommand) == null ? void 0 : _a.id) === "query" && this.values["--format"] === "json") {
+      const normalized = normalizeQvoidQueryNdjson(result.stdout);
+      if (normalized) {
+        await this.renderResultCards(normalized);
+        return;
+      }
+    }
     if (result.json !== void 0) {
       const normalized = normalizeResults(this.currentTool, result.json);
       if (normalized) {

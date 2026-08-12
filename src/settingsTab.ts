@@ -3,8 +3,9 @@ import type PkmRagPlugin from "./main";
 import { OllamaChatClient } from "./ollama/chatClient";
 import { TOOLS } from "./cli/toolRegistry";
 import { detectBinary } from "./cli/binaryResolver";
-import { DetectResult, ToolId } from "./cli/types";
+import { DetectResult, FlagSpec, ToolId } from "./cli/types";
 import { SetupWizardModal } from "./views/setupWizardModal";
+import { getSearchFlags } from "./cli/searchFlags";
 
 export class PkmRagSettingTab extends PluginSettingTab {
 	plugin: PkmRagPlugin;
@@ -89,6 +90,67 @@ export class PkmRagSettingTab extends PluginSettingTab {
 			);
 	}
 
+	/** Resolves the current default (empty string = unset) for a search flag in settings. */
+	private getFlagDefault(id: ToolId, flag: FlagSpec): string {
+		return this.plugin.settings.toolFlagDefaults[id]?.[flag.flag] ?? "";
+	}
+
+	private async setFlagDefault(id: ToolId, flag: FlagSpec, value: string): Promise<void> {
+		if (!this.plugin.settings.toolFlagDefaults[id]) this.plugin.settings.toolFlagDefaults[id] = {};
+		if (value === "") {
+			delete this.plugin.settings.toolFlagDefaults[id][flag.flag];
+		} else {
+			this.plugin.settings.toolFlagDefaults[id][flag.flag] = value;
+		}
+		await this.plugin.saveSettings();
+	}
+
+	/** Type-aware field for one search flag's configured default: toggle for booleans,
+	 *  dropdown for enums, text otherwise. Empty/unset means "use the command's own default." */
+	private renderSearchDefaultField(container: HTMLElement, id: ToolId, flag: FlagSpec): void {
+		const current = this.getFlagDefault(id, flag);
+		const setting = new Setting(container).setName(flag.label).setDesc(flag.description ?? flag.flag);
+
+		if (flag.type === "boolean") {
+			setting.addToggle((toggle) =>
+				toggle.setValue(current === "true").onChange((v) => this.setFlagDefault(id, flag, v ? "true" : ""))
+			);
+			return;
+		}
+
+		if (flag.type === "enum" && flag.enumValues) {
+			setting.addDropdown((dd) => {
+				dd.addOption("", "(use command default)");
+				for (const v of flag.enumValues as string[]) dd.addOption(v, v);
+				dd.setValue(current);
+				dd.onChange((v) => this.setFlagDefault(id, flag, v));
+			});
+			return;
+		}
+
+		setting.addText((text) =>
+			text
+				.setPlaceholder(flag.default !== undefined ? String(flag.default) : "")
+				.setValue(current)
+				.onChange((v) => this.setFlagDefault(id, flag, v.trim()))
+		);
+	}
+
+	/** One collapsed-by-default section per tool listing every unique flag across its
+	 *  search commands, so users can pre-fill values they'd otherwise retype every run. */
+	private renderSearchDefaultsForTool(containerEl: HTMLElement, id: ToolId): void {
+		const tool = TOOLS[id];
+		const flags = getSearchFlags(tool.schema);
+		if (flags.length === 0) return;
+
+		const details = containerEl.createEl("details", { cls: "pkm-rag-search-defaults" });
+		details.createEl("summary", { text: `${tool.displayName} (${flags.length} parameters)` });
+		const body = details.createDiv();
+		for (const flag of flags) {
+			this.renderSearchDefaultField(body, id, flag);
+		}
+	}
+
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
@@ -109,6 +171,17 @@ export class PkmRagSettingTab extends PluginSettingTab {
 			"",
 			() => this.plugin.settings.defaultCollection,
 			(v) => { this.plugin.settings.defaultCollection = v; });
+
+		// --- Search Parameter Defaults ---
+		containerEl.createEl("h3", { text: "Search Parameter Defaults" });
+		containerEl.createEl("p", {
+			text: "Pre-fill these values in the CLI console's search forms instead of leaving them empty. Leave a field blank to use the command's own default.",
+			cls: "setting-item-description",
+		});
+
+		for (const id of Object.keys(TOOLS) as ToolId[]) {
+			this.renderSearchDefaultsForTool(containerEl, id);
+		}
 
 		// --- Ollama Connection ---
 		containerEl.createEl("h3", { text: "Ollama (Chat)" });
