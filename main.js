@@ -927,7 +927,7 @@ var commands4 = [
         type: "enum",
         label: "Output format",
         enumValues: ["summary", "detailed", "json"],
-        default: "summary"
+        default: "json"
       }
     ],
     executionMode: "buffered"
@@ -943,7 +943,14 @@ var commands4 = [
       { flag: "--top-k", type: "number", label: "Top K", default: 10 },
       { flag: "--min-score", type: "number", label: "Minimum score", default: 0.5 },
       { flag: "--threshold", type: "number", label: "Cluster threshold", default: 0.82 },
-      { flag: "--collection", type: "string", label: "Collection" }
+      { flag: "--collection", type: "string", label: "Collection" },
+      {
+        flag: "--format",
+        type: "enum",
+        label: "Output format",
+        enumValues: ["text", "json"],
+        default: "json"
+      }
     ],
     executionMode: "buffered"
   },
@@ -10461,18 +10468,23 @@ var NORMALIZERS = {
   qimg: normalizeQimgResult,
   qnode: normalizeQnodeResult
 };
-function normalizeQvoidQueryNdjson(stdout) {
-  const results = [];
+function parseNdjson(stdout) {
+  const items = [];
   for (const line of stdout.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed)
       continue;
-    let parsed;
     try {
-      parsed = JSON.parse(trimmed);
+      items.push(JSON.parse(trimmed));
     } catch (e) {
       continue;
     }
+  }
+  return items;
+}
+function normalizeQvoidQueryNdjson(stdout) {
+  const results = [];
+  for (const parsed of parseNdjson(stdout)) {
     const target = asRecord(parsed);
     if (!target || typeof target.target !== "string" || !Array.isArray(target.occurrences))
       continue;
@@ -10487,6 +10499,20 @@ function normalizeQvoidQueryNdjson(stdout) {
         subtitle: contextParts.length > 0 ? contextParts.join(" \u2026 ") : typeof occ.semantic_type === "string" ? occ.semantic_type : void 0
       });
     }
+  }
+  return results.length > 0 ? results : null;
+}
+function normalizeQvoidFindSimilarNdjson(stdout) {
+  const results = [];
+  for (const parsed of parseNdjson(stdout)) {
+    const r = asRecord(parsed);
+    if (!r || typeof r.target !== "string")
+      continue;
+    results.push({
+      title: r.target,
+      fileRef: r.target,
+      score: typeof r.score === "number" ? r.score : void 0
+    });
   }
   return results.length > 0 ? results : null;
 }
@@ -10954,12 +10980,21 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
     this.outputEl.setText(this.outputEl.getText() + chunk);
   }
   async finishOutput(result) {
-    var _a;
-    if (this.currentTool === "qvoid" && ((_a = this.currentCommand) == null ? void 0 : _a.id) === "query" && this.values["--format"] === "json") {
-      const normalized = normalizeQvoidQueryNdjson(result.stdout);
-      if (normalized) {
-        await this.renderResultCards(normalized);
-        return;
+    var _a, _b;
+    if (this.currentTool === "qvoid" && this.values["--format"] === "json") {
+      if (((_a = this.currentCommand) == null ? void 0 : _a.id) === "query") {
+        const normalized = normalizeQvoidQueryNdjson(result.stdout);
+        if (normalized) {
+          await this.renderResultCards(normalized);
+          return;
+        }
+      }
+      if (((_b = this.currentCommand) == null ? void 0 : _b.id) === "find-similar" && this.values["--cluster"] !== true) {
+        const normalized = normalizeQvoidFindSimilarNdjson(result.stdout);
+        if (normalized) {
+          await this.renderResultCards(normalized);
+          return;
+        }
       }
     }
     if (result.json !== void 0) {

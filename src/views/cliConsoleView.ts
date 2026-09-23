@@ -4,7 +4,12 @@ import { TOOLS } from "../cli/toolRegistry";
 import { GenericCliClient, JSON_OUTPUT_VALUE_KEY, CommandResult } from "../cli/genericClient";
 import { CommandCategory, CommandNode, FlagSpec, PositionalArgSpec, ToolId } from "../cli/types";
 import { parseCollectionNames } from "../cli/collectionNames";
-import { normalizeResults, normalizeQvoidQueryNdjson, NormalizedResult } from "../cli/resultNormalizer";
+import {
+	normalizeResults,
+	normalizeQvoidQueryNdjson,
+	normalizeQvoidFindSimilarNdjson,
+	NormalizedResult,
+} from "../cli/resultNormalizer";
 import { renderFileLink } from "./fileLink";
 
 /** Tools whose collection-listing output we know how to parse into plain names for
@@ -531,14 +536,23 @@ export class CliConsoleView extends ItemView {
 	}
 
 	private async finishOutput(result: CommandResult): Promise<void> {
-		// qvoid's `query` prints NDJSON when --format json is chosen, not a single JSON
-		// value — the generic jsonFlag/result.json path doesn't apply, since --format is
-		// an enum (summary/detailed/json), not a boolean flag like the other tools' --json.
-		if (this.currentTool === "qvoid" && this.currentCommand?.id === "query" && this.values["--format"] === "json") {
-			const normalized = normalizeQvoidQueryNdjson(result.stdout);
-			if (normalized) {
-				await this.renderResultCards(normalized);
-				return;
+		// qvoid's `query` and `find-similar` print NDJSON when --format json is chosen, not
+		// a single JSON value — the generic jsonFlag/result.json path doesn't apply, since
+		// --format is an enum, not a boolean flag like the other tools' --json.
+		if (this.currentTool === "qvoid" && this.values["--format"] === "json") {
+			if (this.currentCommand?.id === "query") {
+				const normalized = normalizeQvoidQueryNdjson(result.stdout);
+				if (normalized) {
+					await this.renderResultCards(normalized);
+					return;
+				}
+			}
+			if (this.currentCommand?.id === "find-similar" && this.values["--cluster"] !== true) {
+				const normalized = normalizeQvoidFindSimilarNdjson(result.stdout);
+				if (normalized) {
+					await this.renderResultCards(normalized);
+					return;
+				}
 			}
 		}
 

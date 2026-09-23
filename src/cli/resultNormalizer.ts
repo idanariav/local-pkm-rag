@@ -104,6 +104,20 @@ const NORMALIZERS: Partial<Record<ToolId, (item: unknown) => NormalizedResult | 
 	qnode: normalizeQnodeResult,
 };
 
+function parseNdjson(stdout: string): unknown[] {
+	const items: unknown[] = [];
+	for (const line of stdout.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		try {
+			items.push(JSON.parse(trimmed));
+		} catch {
+			continue;
+		}
+	}
+	return items;
+}
+
 /**
  * qvoid's `query --format json` prints NDJSON (one JSON object per line), each describing
  * an unresolved "void" target with a list of real-file occurrences — not a JSON array of
@@ -114,17 +128,7 @@ const NORMALIZERS: Partial<Record<ToolId, (item: unknown) => NormalizedResult | 
 export function normalizeQvoidQueryNdjson(stdout: string): NormalizedResult[] | null {
 	const results: NormalizedResult[] = [];
 
-	for (const line of stdout.split("\n")) {
-		const trimmed = line.trim();
-		if (!trimmed) continue;
-
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(trimmed);
-		} catch {
-			continue;
-		}
-
+	for (const parsed of parseNdjson(stdout)) {
 		const target = asRecord(parsed);
 		if (!target || typeof target.target !== "string" || !Array.isArray(target.occurrences)) continue;
 
@@ -143,6 +147,29 @@ export function normalizeQvoidQueryNdjson(stdout: string): NormalizedResult[] | 
 							: undefined,
 			});
 		}
+	}
+
+	return results.length > 0 ? results : null;
+}
+
+/**
+ * qvoid's `find-similar --format json` prints NDJSON of { target, score } — ranked void
+ * targets similar to the query, same "no backing file" caveat as query's targets. There's
+ * no source note to link to here (unlike query's occurrences), so these render through the
+ * normal fileRef-resolution path and fall back to the unresolved-target style; the card
+ * layout, score badge, and score sorting still match the other tools' search results.
+ */
+export function normalizeQvoidFindSimilarNdjson(stdout: string): NormalizedResult[] | null {
+	const results: NormalizedResult[] = [];
+
+	for (const parsed of parseNdjson(stdout)) {
+		const r = asRecord(parsed);
+		if (!r || typeof r.target !== "string") continue;
+		results.push({
+			title: r.target,
+			fileRef: r.target,
+			score: typeof r.score === "number" ? r.score : undefined,
+		});
 	}
 
 	return results.length > 0 ? results : null;
