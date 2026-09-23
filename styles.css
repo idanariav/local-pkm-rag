@@ -438,6 +438,7 @@
 	height: 100%;
 	overflow: hidden;
 	padding: 8px;
+	container-type: inline-size;
 }
 
 .pkm-rag-console-header {
@@ -599,4 +600,27 @@
 	display: -webkit-box;
 	-webkit-line-clamp: 3;
 	-webkit-box-orient: vertical;
+}
+
+/* Narrow/long host (e.g. a sidebar tab): stack the command picker above the
+ * form instead of splitting them into two cramped columns. */
+@container (max-width: 480px) {
+	.pkm-rag-console-body {
+		flex-direction: column;
+		overflow-y: auto;
+	}
+
+	.pkm-rag-console-picker {
+		width: 100%;
+		flex: none;
+	}
+
+	.pkm-rag-console-command-list {
+		flex: none;
+		max-height: 180px;
+	}
+
+	.pkm-rag-console-form {
+		overflow-y: visible;
+	}
 }
