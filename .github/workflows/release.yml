@@ -17,6 +17,11 @@ jobs:
         with:
           node-version: "22"
 
+      # The lockfile is written by npm 11; npm 10 (bundled with Node 22) rejects its optional
+      # per-platform entries in `npm ci`.
+      - name: Use npm 11
+        run: npm install -g npm@11
+
       # @idan_ariav/qmd and @idan_ariav/qvoid are only bundled for their pure `/query`
       # modules; --ignore-scripts skips their native installs (llama.cpp, SQLite, ONNX).
       - name: Build plugin
