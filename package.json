@@ -1,6 +1,6 @@
 {
 	"name": "pkm-rag",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"description": "Local RAG-powered knowledge assistant for Obsidian",
 	"main": "main.js",
 	"scripts": {
