@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { nodeChildProcess } from "./nodeModules";
 
 export interface RunOptions {
 	env: NodeJS.ProcessEnv;
@@ -32,7 +32,7 @@ const KILL_GRACE_MS = 3000;
 export class CliRunner {
 	run(binPath: string, args: string[], opts: RunOptions): Promise<RunResult> {
 		return new Promise((resolve, reject) => {
-			const child = spawn(binPath, args, { shell: false, env: opts.env, cwd: opts.cwd });
+			const child = nodeChildProcess().spawn(binPath, args, { shell: false, env: opts.env, cwd: opts.cwd });
 			let stdout = "";
 			let stderr = "";
 			let settled = false;
@@ -63,7 +63,7 @@ export class CliRunner {
 	}
 
 	runStreaming(binPath: string, args: string[], opts: StreamingOptions): StreamingHandle {
-		const child = spawn(binPath, args, { shell: false, env: opts.env, cwd: opts.cwd });
+		const child = nodeChildProcess().spawn(binPath, args, { shell: false, env: opts.env, cwd: opts.cwd });
 		let settled = false;
 		let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 

@@ -449,6 +449,17 @@
 	width: 100%;
 }
 
+.pkm-rag-console-mode-badge {
+	display: block;
+	margin-top: 4px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.pkm-rag-console-mode-badge:empty {
+	display: none;
+}
+
 .pkm-rag-console-body {
 	display: flex;
 	gap: 12px;

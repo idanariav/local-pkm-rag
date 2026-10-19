@@ -15,11 +15,13 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "22"
 
+      # @idan_ariav/qmd and @idan_ariav/qvoid are only bundled for their pure `/query`
+      # modules; --ignore-scripts skips their native installs (llama.cpp, SQLite, ONNX).
       - name: Build plugin
         run: |
-          npm install
+          npm ci --ignore-scripts
           npm run build
 
       - name: Create zip archive

@@ -10,6 +10,7 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
@@ -34,6 +35,10 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var __publicField = (obj, key, value) => {
+  __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+  return value;
+};
 
 // node_modules/extend/index.js
 var require_extend = __commonJS({
@@ -132,7 +137,7 @@ __export(main_exports, {
   default: () => PkmRagPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian10 = require("obsidian");
+var import_obsidian14 = require("obsidian");
 
 // src/constants.ts
 var DEFAULTS = {
@@ -1063,7 +1068,9 @@ var DEFAULT_SETTINGS = {
     qnode: ["index", "metrics.compute"],
     qvoid: ["index", "classify", "embed"]
   },
-  defaultCollection: DEFAULTS.QMD_DEFAULT_COLLECTION
+  defaultCollection: DEFAULTS.QMD_DEFAULT_COLLECTION,
+  liteExportDir: "Scaffolding/Embeddings",
+  forceLiteMode: false
 };
 function migrateLegacySettings(settings) {
   var _a;
@@ -1100,7 +1107,7 @@ function resolveParseSettings(filePath, settings) {
 }
 
 // src/settingsTab.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/ollama/chatClient.ts
 var import_obsidian = require("obsidian");
@@ -1197,16 +1204,28 @@ var OllamaChatClient = class {
 };
 
 // src/cli/binaryResolver.ts
-var import_fs2 = require("fs");
+var import_obsidian3 = require("obsidian");
+
+// src/cli/nodeModules.ts
+var import_obsidian2 = require("obsidian");
+function load(id) {
+  if (!import_obsidian2.Platform.isDesktopApp) {
+    throw new Error(`"${id}" is unavailable: CLI tools need the desktop app`);
+  }
+  return require(id);
+}
+var nodeFs = () => load("fs");
+var nodeOs = () => load("os");
+var nodePath = () => load("path");
+var nodeChildProcess = () => load("child_process");
 
 // src/cli/processRunner.ts
-var import_child_process = require("child_process");
 var KILL_GRACE_MS = 3e3;
 var CliRunner = class {
   run(binPath, args, opts) {
     return new Promise((resolve, reject) => {
       var _a, _b;
-      const child = (0, import_child_process.spawn)(binPath, args, { shell: false, env: opts.env, cwd: opts.cwd });
+      const child = nodeChildProcess().spawn(binPath, args, { shell: false, env: opts.env, cwd: opts.cwd });
       let stdout = "";
       let stderr = "";
       let settled = false;
@@ -1235,7 +1254,7 @@ var CliRunner = class {
     });
   }
   runStreaming(binPath, args, opts) {
-    const child = (0, import_child_process.spawn)(binPath, args, { shell: false, env: opts.env, cwd: opts.cwd });
+    const child = nodeChildProcess().spawn(binPath, args, { shell: false, env: opts.env, cwd: opts.cwd });
     let settled = false;
     let timeoutHandle;
     const promise = new Promise((resolve, reject) => {
@@ -1279,17 +1298,16 @@ var CliRunner = class {
 };
 
 // src/cli/pathResolver.ts
-var import_fs = require("fs");
-var import_os = require("os");
-var import_path = require("path");
-var import_child_process2 = require("child_process");
 var cachedEnvPromise;
 function highestNvmNodeBin() {
-  const nvmDir = (0, import_path.join)((0, import_os.homedir)(), ".nvm", "versions", "node");
-  if (!(0, import_fs.existsSync)(nvmDir))
+  const { existsSync, readdirSync } = nodeFs();
+  const { join: join2 } = nodePath();
+  const { homedir } = nodeOs();
+  const nvmDir = join2(homedir(), ".nvm", "versions", "node");
+  if (!existsSync(nvmDir))
     return void 0;
   try {
-    const versions = (0, import_fs.readdirSync)(nvmDir).filter((v) => /^v\d+\.\d+\.\d+$/.test(v));
+    const versions = readdirSync(nvmDir).filter((v) => /^v\d+\.\d+\.\d+$/.test(v));
     if (versions.length === 0)
       return void 0;
     versions.sort((a, b) => {
@@ -1301,31 +1319,37 @@ function highestNvmNodeBin() {
       }
       return 0;
     });
-    return (0, import_path.join)(nvmDir, versions[versions.length - 1], "bin");
+    return join2(nvmDir, versions[versions.length - 1], "bin");
   } catch (e) {
     return void 0;
   }
 }
 function staticCandidateDirs() {
-  const home = (0, import_os.homedir)();
-  const candidates = process.platform === "win32" ? [(0, import_path.join)(home, "AppData", "Roaming", "npm"), (0, import_path.join)(home, "AppData", "Local", "Volta", "bin")] : [
+  const { existsSync } = nodeFs();
+  const { join: join2 } = nodePath();
+  const { homedir } = nodeOs();
+  const home = homedir();
+  const candidates = process.platform === "win32" ? [join2(home, "AppData", "Roaming", "npm"), join2(home, "AppData", "Local", "Volta", "bin")] : [
     "/opt/homebrew/bin",
     "/opt/homebrew/sbin",
     "/usr/local/bin",
-    (0, import_path.join)(home, ".volta", "bin"),
-    (0, import_path.join)(home, ".npm-global", "bin"),
-    (0, import_path.join)(home, ".local", "share", "pnpm")
+    join2(home, ".volta", "bin"),
+    join2(home, ".npm-global", "bin"),
+    join2(home, ".local", "share", "pnpm")
   ];
   const nvmBin = highestNvmNodeBin();
   if (nvmBin)
     candidates.push(nvmBin);
-  return candidates.filter((dir) => (0, import_fs.existsSync)(dir));
+  return candidates.filter((dir) => existsSync(dir));
 }
 function npmPrefixBin() {
+  const { existsSync } = nodeFs();
+  const { join: join2 } = nodePath();
+  const { spawn } = nodeChildProcess();
   return new Promise((resolve) => {
     var _a;
     try {
-      const child = (0, import_child_process2.spawn)("npm", ["config", "get", "prefix"], { shell: false, env: process.env });
+      const child = spawn("npm", ["config", "get", "prefix"], { shell: false, env: process.env });
       let out = "";
       (_a = child.stdout) == null ? void 0 : _a.on("data", (chunk) => out += chunk.toString());
       child.on("error", () => resolve(void 0));
@@ -1335,8 +1359,8 @@ function npmPrefixBin() {
         const prefix = out.trim();
         if (!prefix)
           return resolve(void 0);
-        const bin = process.platform === "win32" ? prefix : (0, import_path.join)(prefix, "bin");
-        resolve((0, import_fs.existsSync)(bin) ? bin : void 0);
+        const bin = process.platform === "win32" ? prefix : join2(prefix, "bin");
+        resolve(existsSync(bin) ? bin : void 0);
       });
     } catch (e) {
       resolve(void 0);
@@ -1347,6 +1371,7 @@ async function buildAugmentedEnv() {
   if (!cachedEnvPromise) {
     cachedEnvPromise = (async () => {
       var _a;
+      const { delimiter } = nodePath();
       const dirs = staticCandidateDirs();
       const npmBin = await npmPrefixBin();
       if (npmBin && !dirs.includes(npmBin))
@@ -1354,7 +1379,7 @@ async function buildAugmentedEnv() {
       const existingPath = (_a = process.env.PATH) != null ? _a : "";
       return {
         ...process.env,
-        PATH: [...dirs, existingPath].filter(Boolean).join(import_path.delimiter)
+        PATH: [...dirs, existingPath].filter(Boolean).join(delimiter)
       };
     })();
   }
@@ -1362,13 +1387,15 @@ async function buildAugmentedEnv() {
 }
 function findExecutableInPath(binaryName, env) {
   var _a;
-  const dirs = ((_a = env.PATH) != null ? _a : "").split(import_path.delimiter).filter(Boolean);
+  const { existsSync, accessSync, constants: fsConstants } = nodeFs();
+  const { join: join2, delimiter } = nodePath();
+  const dirs = ((_a = env.PATH) != null ? _a : "").split(delimiter).filter(Boolean);
   for (const dir of dirs) {
-    const candidate = (0, import_path.join)(dir, binaryName);
-    if (!(0, import_fs.existsSync)(candidate))
+    const candidate = join2(dir, binaryName);
+    if (!existsSync(candidate))
       continue;
     try {
-      (0, import_fs.accessSync)(candidate, import_fs.constants.X_OK);
+      accessSync(candidate, fsConstants.X_OK);
       return candidate;
     } catch (e) {
       continue;
@@ -1382,18 +1409,21 @@ var DETECT_TIMEOUT_MS = 1e4;
 var runner = new CliRunner();
 function isExecutablePath(path) {
   try {
-    (0, import_fs2.accessSync)(path, import_fs2.constants.X_OK);
+    nodeFs().accessSync(path, nodeFs().constants.X_OK);
     return true;
   } catch (e) {
     return false;
   }
 }
 function resolveExecutableTarget(binaryName, overridePath) {
-  const useOverride = !!overridePath && (0, import_fs2.existsSync)(overridePath) && isExecutablePath(overridePath);
+  const useOverride = !!overridePath && nodeFs().existsSync(overridePath) && isExecutablePath(overridePath);
   return useOverride ? overridePath : binaryName;
 }
 async function detectBinary(binaryName, healthCheckArgs, overridePath) {
   var _a, _b;
+  if (!import_obsidian3.Platform.isDesktopApp) {
+    return { status: "not-found", message: "CLI tools need the desktop app" };
+  }
   const env = await buildAugmentedEnv();
   const target = resolveExecutableTarget(binaryName, overridePath);
   const resolvedPath = target !== binaryName ? target : (_a = findExecutableInPath(binaryName, env)) != null ? _a : target;
@@ -1417,7 +1447,7 @@ async function detectBinary(binaryName, healthCheckArgs, overridePath) {
 }
 
 // src/views/setupWizardModal.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/cli/genericClient.ts
 var JSON_OUTPUT_VALUE_KEY = "__outputJson";
@@ -1544,7 +1574,7 @@ var GenericCliClient = class {
 var NODE_URL = "https://nodejs.org/";
 var NVM_URL = "https://github.com/nvm-sh/nvm";
 var HOMEBREW_URL = "https://brew.sh/";
-var SetupWizardModal = class extends import_obsidian2.Modal {
+var SetupWizardModal = class extends import_obsidian4.Modal {
   constructor(app, plugin) {
     super(app);
     this.runner = new CliRunner();
@@ -1617,17 +1647,17 @@ var SetupWizardModal = class extends import_obsidian2.Modal {
     prereqEl.createEl("p", {
       text: "Node.js/npm weren't found, so tools can't be installed automatically. Install one of the following, then reopen this wizard:"
     });
-    const list2 = prereqEl.createEl("ul");
-    this.addLink(list2, "Node.js (nodejs.org)", NODE_URL);
-    this.addLink(list2, "nvm (Node version manager)", NVM_URL);
-    this.addLink(list2, "Homebrew (brew install node)", HOMEBREW_URL);
+    const list3 = prereqEl.createEl("ul");
+    this.addLink(list3, "Node.js (nodejs.org)", NODE_URL);
+    this.addLink(list3, "nvm (Node version manager)", NVM_URL);
+    this.addLink(list3, "Homebrew (brew install node)", HOMEBREW_URL);
     for (const card of Object.values(this.cards)) {
       if (card)
         card.installBtn.disabled = true;
     }
   }
-  addLink(list2, text3, url) {
-    const item = list2.createEl("li");
+  addLink(list3, text3, url) {
+    const item = list3.createEl("li");
     item.createEl("a", { text: text3, href: url, attr: { target: "_blank", rel: "noopener" } });
   }
   renderCard(container, id) {
@@ -1707,7 +1737,7 @@ var SetupWizardModal = class extends import_obsidian2.Modal {
     try {
       const { code } = await handle.promise;
       if (code !== 0) {
-        new import_obsidian2.Notice(`${tool.displayName} install failed (exit ${code}). See the log for details.`);
+        new import_obsidian4.Notice(`${tool.displayName} install failed (exit ${code}). See the log for details.`);
       }
     } catch (error) {
       append(`
@@ -1730,7 +1760,7 @@ var SetupWizardModal = class extends import_obsidian2.Modal {
     const tool = TOOLS[id];
     const commandIds = (_a = this.plugin.settings.toolUpdateCommands[id]) != null ? _a : [];
     if (commandIds.length === 0) {
-      new import_obsidian2.Notice(`No update commands configured for ${tool.displayName}.`);
+      new import_obsidian4.Notice(`No update commands configured for ${tool.displayName}.`);
       return;
     }
     card.installBtn.disabled = true;
@@ -1755,11 +1785,11 @@ $ ${tool.binaryName} ${commandId}
         const result = await handle.done;
         delete this.activeUpdates[id];
         if (result.code !== 0) {
-          new import_obsidian2.Notice(`${tool.displayName} update failed at "${commandId}" (exit ${result.code}). See the log for details.`);
+          new import_obsidian4.Notice(`${tool.displayName} update failed at "${commandId}" (exit ${result.code}). See the log for details.`);
           return;
         }
       }
-      new import_obsidian2.Notice(`${tool.displayName} updated.`);
+      new import_obsidian4.Notice(`${tool.displayName} updated.`);
     } catch (error) {
       append(`
 [cancelled or failed: ${error.message}]
@@ -1790,14 +1820,14 @@ function getSearchFlags(schema) {
 }
 
 // src/settingsTab.ts
-var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
+var PkmRagSettingTab = class extends import_obsidian5.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
   /** Helper for the common text-input setting pattern. */
   addTextSetting(container, name, desc, placeholder, getValue, setValue) {
-    return new import_obsidian3.Setting(container).setName(name).setDesc(desc).addText(
+    return new import_obsidian5.Setting(container).setName(name).setDesc(desc).addText(
       (text3) => text3.setPlaceholder(placeholder).setValue(getValue()).onChange(async (value) => {
         setValue(value);
         await this.plugin.saveSettings();
@@ -1833,7 +1863,7 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
         this.plugin.settings.toolPaths[id] = v;
       }
     );
-    new import_obsidian3.Setting(wrapper).setName(`Test ${tool.binaryName} connection`).setDesc(`Check if ${tool.binaryName} is reachable`).addButton(
+    new import_obsidian5.Setting(wrapper).setName(`Test ${tool.binaryName} connection`).setDesc(`Check if ${tool.binaryName} is reachable`).addButton(
       (btn) => btn.setButtonText("Test").onClick(async () => {
         const result = await detectBinary(
           tool.binaryName,
@@ -1842,7 +1872,7 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
         );
         const label = this.describeStatus(result);
         statusEl.setText(`Status: ${label}`);
-        new import_obsidian3.Notice(`${tool.displayName}: ${label}`);
+        new import_obsidian5.Notice(`${tool.displayName}: ${label}`);
       })
     ).addButton(
       (btn) => btn.setButtonText("Setup wizard").onClick(() => {
@@ -1883,7 +1913,7 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
   renderSearchDefaultField(container, id, flag) {
     var _a, _b;
     const display = this.getFlagDisplayValue(id, flag);
-    const setting = new import_obsidian3.Setting(container).setName(flag.label).setDesc((_a = flag.description) != null ? _a : flag.flag);
+    const setting = new import_obsidian5.Setting(container).setName(flag.label).setDesc((_a = flag.description) != null ? _a : flag.flag);
     if (this.hasFlagOverride(id, flag)) {
       setting.setDesc(`${(_b = flag.description) != null ? _b : flag.flag} (overridden)`);
     }
@@ -1948,7 +1978,7 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
     });
     const selected = new Set((_a = this.plugin.settings.toolUpdateCommands[id]) != null ? _a : []);
     for (const command of candidates) {
-      new import_obsidian3.Setting(body).setName(command.label).setDesc((_b = command.description) != null ? _b : command.argvPath.join(" ")).addToggle(
+      new import_obsidian5.Setting(body).setName(command.label).setDesc((_b = command.description) != null ? _b : command.argvPath.join(" ")).addToggle(
         (toggle) => toggle.setValue(selected.has(command.id)).onChange(async (value) => {
           if (value)
             selected.add(command.id);
@@ -1971,6 +2001,27 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
     for (const id of Object.keys(TOOLS)) {
       this.renderToolSetting(containerEl, id);
     }
+    containerEl.createEl("h4", { text: "Lite mode" });
+    containerEl.createEl("p", {
+      text: "Without a CLI (always on mobile), the console answers qmd, qvoid and qimg searches from exports in the vault. Create them with `qmd export`, `qvoid export` and `qimg export`.",
+      cls: "setting-item-description"
+    });
+    this.addTextSetting(
+      containerEl,
+      "Export folder",
+      "Vault folder containing the qmd/, qvoid/ and qimg/ exports",
+      "Scaffolding/Embeddings",
+      () => this.plugin.settings.liteExportDir,
+      (v) => {
+        this.plugin.settings.liteExportDir = v.trim();
+      }
+    );
+    new import_obsidian5.Setting(containerEl).setName("Always use lite mode").setDesc("Use the exports even when the CLIs are installed (for testing lite mode on desktop).").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.forceLiteMode).onChange(async (value) => {
+        this.plugin.settings.forceLiteMode = value;
+        await this.plugin.saveSettings();
+      })
+    );
     containerEl.createEl("h4", { text: "QMD (RAG chat)" });
     this.addTextSetting(
       containerEl,
@@ -2019,14 +2070,14 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
         this.plugin.settings.chatModel = v;
       }
     );
-    new import_obsidian3.Setting(containerEl).setName("Test Ollama connection").setDesc("Check if Ollama is reachable").addButton(
+    new import_obsidian5.Setting(containerEl).setName("Test Ollama connection").setDesc("Check if Ollama is reachable").addButton(
       (btn) => btn.setButtonText("Test").onClick(async () => {
         const client = new OllamaChatClient(
           this.plugin.settings.ollamaUrl,
           this.plugin.settings.chatModel
         );
         const ok2 = await client.isAvailable();
-        new import_obsidian3.Notice(
+        new import_obsidian5.Notice(
           ok2 ? "Ollama is connected and available." : "Cannot reach Ollama. Is it running?"
         );
       })
@@ -2036,7 +2087,7 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
       text: "Controls which part of notes is used as context for the LLM. QMD finds relevant documents; these settings control what content is extracted from each result.",
       cls: "setting-item-description"
     });
-    new import_obsidian3.Setting(containerEl).setName("Content mode").setDesc(
+    new import_obsidian5.Setting(containerEl).setName("Content mode").setDesc(
       "'Section' extracts only the configured header section. 'Full' uses entire note content."
     ).addDropdown(
       (dd) => dd.addOption("section", "Section only").addOption("full", "Full content").setValue(this.plugin.settings.contentMode).onChange(async (value) => {
@@ -2054,7 +2105,7 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
         this.plugin.settings.noteSectionHeaderName = v;
       }
     );
-    new import_obsidian3.Setting(containerEl).setName("Section header level").setDesc(
+    new import_obsidian5.Setting(containerEl).setName("Section header level").setDesc(
       "Heading level to match (e.g. 2 = ##, 3 = ###)"
     ).addDropdown(
       (dd) => dd.addOption("1", "H1 (#)").addOption("2", "H2 (##)").addOption("3", "H3 (###)").addOption("4", "H4 (####)").addOption("5", "H5 (#####)").addOption("6", "H6 (######)").setValue(String(this.plugin.settings.noteSectionHeaderLevel)).onChange(async (value) => {
@@ -2079,7 +2130,7 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
     });
     const folderListEl = containerEl.createDiv("pkm-folder-list");
     this.renderFolderList(folderListEl);
-    new import_obsidian3.Setting(containerEl).addButton(
+    new import_obsidian5.Setting(containerEl).addButton(
       (btn) => btn.setButtonText("+ Add folder").onClick(async () => {
         this.plugin.settings.folderConfigs.push({ folder: "" });
         await this.plugin.saveSettings();
@@ -2088,25 +2139,25 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
       })
     );
     containerEl.createEl("h3", { text: "Retrieval" });
-    new import_obsidian3.Setting(containerEl).setName("Top K (Explore mode)").setDesc("Number of results retrieved for Q&A (1-20)").addSlider(
+    new import_obsidian5.Setting(containerEl).setName("Top K (Explore mode)").setDesc("Number of results retrieved for Q&A (1-20)").addSlider(
       (slider) => slider.setLimits(1, 20, 1).setValue(this.plugin.settings.topK).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.topK = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Top K (Related notes)").setDesc("Number of similar notes to show (1-30)").addSlider(
+    new import_obsidian5.Setting(containerEl).setName("Top K (Related notes)").setDesc("Number of similar notes to show (1-30)").addSlider(
       (slider) => slider.setLimits(1, 30, 1).setValue(this.plugin.settings.similarTopK).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.similarTopK = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Top K (Gap analysis)").setDesc("Number of results for gap analysis (1-30)").addSlider(
+    new import_obsidian5.Setting(containerEl).setName("Top K (Gap analysis)").setDesc("Number of results for gap analysis (1-30)").addSlider(
       (slider) => slider.setLimits(1, 30, 1).setValue(this.plugin.settings.gapAnalysisTopK).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.gapAnalysisTopK = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Similarity threshold").setDesc(
+    new import_obsidian5.Setting(containerEl).setName("Similarity threshold").setDesc(
       "Minimum score to include results (0.0-1.0)"
     ).addSlider(
       (slider) => slider.setLimits(0, 100, 5).setValue(
@@ -2119,7 +2170,7 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
       })
     );
     containerEl.createEl("h3", { text: "UI" });
-    new import_obsidian3.Setting(containerEl).setName("Filter linked notes by default").setDesc(
+    new import_obsidian5.Setting(containerEl).setName("Filter linked notes by default").setDesc(
       "Exclude already-linked notes from Related Notes results by default"
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.filterLinkedByDefault).onChange(async (value) => {
@@ -2127,7 +2178,7 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Enable streaming").setDesc("Stream chat responses token by token").addToggle(
+    new import_obsidian5.Setting(containerEl).setName("Enable streaming").setDesc("Stream chat responses token by token").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.enableStreaming).onChange(async (value) => {
         this.plugin.settings.enableStreaming = value;
         await this.plugin.saveSettings();
@@ -2146,7 +2197,7 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
     for (let i = 0; i < configs.length; i++) {
       const config = configs[i];
       const groupEl = containerEl.createDiv("pkm-folder-config-group pkm-rag-folder-group");
-      new import_obsidian3.Setting(groupEl).setName(`Folder ${i + 1}`).addText(
+      new import_obsidian5.Setting(groupEl).setName(`Folder ${i + 1}`).addText(
         (text3) => text3.setPlaceholder("e.g. Content/Notes").setValue(config.folder).onChange(async (value) => {
           config.folder = value.trim().replace(/\/+$/, "");
           await this.plugin.saveSettings();
@@ -2159,7 +2210,7 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
           this.renderFolderList(containerEl);
         })
       );
-      new import_obsidian3.Setting(groupEl).setName("Content mode").addDropdown(
+      new import_obsidian5.Setting(groupEl).setName("Content mode").addDropdown(
         (dd) => {
           var _a;
           return dd.addOption("", "Use default").addOption("section", "Section only").addOption("full", "Full content").setValue((_a = config.contentMode) != null ? _a : "").onChange(async (value) => {
@@ -2168,7 +2219,7 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
           });
         }
       );
-      new import_obsidian3.Setting(groupEl).setName("Section header name").addText(
+      new import_obsidian5.Setting(groupEl).setName("Section header name").addText(
         (text3) => {
           var _a;
           return text3.setPlaceholder("(use default)").setValue((_a = config.noteSectionHeaderName) != null ? _a : "").onChange(async (value) => {
@@ -2177,7 +2228,7 @@ var PkmRagSettingTab = class extends import_obsidian3.PluginSettingTab {
           });
         }
       );
-      new import_obsidian3.Setting(groupEl).setName("Section header level").addDropdown(
+      new import_obsidian5.Setting(groupEl).setName("Section header level").addDropdown(
         (dd) => dd.addOption("", "Use default").addOption("1", "H1 (#)").addOption("2", "H2 (##)").addOption("3", "H3 (###)").addOption("4", "H4 (####)").addOption("5", "H5 (#####)").addOption("6", "H6 (######)").setValue(
           config.noteSectionHeaderLevel != null ? String(config.noteSectionHeaderLevel) : ""
         ).onChange(async (value) => {
@@ -2303,10 +2354,10 @@ var QmdClient = class {
 };
 
 // src/views/relatedNotesView.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/rag/retrieval.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // node_modules/bail/index.js
 function bail(error) {
@@ -2578,7 +2629,7 @@ VFileMessage.prototype.ruleId = void 0;
 VFileMessage.prototype.source = void 0;
 
 // node_modules/vfile/lib/minpath.browser.js
-var minpath = { basename, dirname, extname, join: join2, sep: "/" };
+var minpath = { basename, dirname, extname, join, sep: "/" };
 function basename(path, extname2) {
   if (extname2 !== void 0 && typeof extname2 !== "string") {
     throw new TypeError('"ext" argument must be a string');
@@ -2695,7 +2746,7 @@ function extname(path) {
   }
   return path.slice(startDot, end);
 }
-function join2(...segments) {
+function join(...segments) {
   let index2 = -1;
   let joined;
   while (++index2 < segments.length) {
@@ -4018,8 +4069,8 @@ function decodeNamedCharacterReference(value) {
 }
 
 // node_modules/micromark-util-chunked/index.js
-function splice(list2, start, remove, items) {
-  const end = list2.length;
+function splice(list3, start, remove2, items) {
+  const end = list3.length;
   let chunkStart = 0;
   let parameters;
   if (start < 0) {
@@ -4027,27 +4078,27 @@ function splice(list2, start, remove, items) {
   } else {
     start = start > end ? end : start;
   }
-  remove = remove > 0 ? remove : 0;
+  remove2 = remove2 > 0 ? remove2 : 0;
   if (items.length < 1e4) {
     parameters = Array.from(items);
-    parameters.unshift(start, remove);
-    list2.splice(...parameters);
+    parameters.unshift(start, remove2);
+    list3.splice(...parameters);
   } else {
-    if (remove)
-      list2.splice(start, remove);
+    if (remove2)
+      list3.splice(start, remove2);
     while (chunkStart < items.length) {
       parameters = items.slice(chunkStart, chunkStart + 1e4);
       parameters.unshift(start, 0);
-      list2.splice(...parameters);
+      list3.splice(...parameters);
       chunkStart += 1e4;
       start += 1e4;
     }
   }
 }
-function push(list2, items) {
-  if (list2.length > 0) {
-    splice(list2, list2.length, 0, items);
-    return list2;
+function push(list3, items) {
+  if (list3.length > 0) {
+    splice(list3, list3.length, 0, items);
+    return list3;
   }
   return items;
 }
@@ -4083,12 +4134,12 @@ function syntaxExtension(all2, extension2) {
     }
   }
 }
-function constructs(existing, list2) {
+function constructs(existing, list3) {
   let index2 = -1;
   const before = [];
-  while (++index2 < list2.length) {
+  while (++index2 < list3.length) {
     ;
-    (list2[index2].add === "after" ? existing : before).push(list2[index2]);
+    (list3[index2].add === "after" ? existing : before).push(list3[index2]);
   }
   splice(existing, 0, 0, before);
 }
@@ -4141,10 +4192,10 @@ function markdownSpace(code) {
 }
 var unicodePunctuation = regexCheck(/\p{P}|\p{S}/u);
 var unicodeWhitespace = regexCheck(/\s/);
-function regexCheck(regex) {
+function regexCheck(regex2) {
   return check;
   function check(code) {
-    return code !== null && code > -1 && regex.test(String.fromCharCode(code));
+    return code !== null && code > -1 && regex2.test(String.fromCharCode(code));
   }
 }
 
@@ -5372,13 +5423,13 @@ var SpliceBuffer = class {
     }
   }
 };
-function chunkedPush(list2, right) {
+function chunkedPush(list3, right) {
   let chunkStart = 0;
   if (right.length < 1e4) {
-    list2.push(...right);
+    list3.push(...right);
   } else {
     while (chunkStart < right.length) {
-      list2.push(...right.slice(chunkStart, chunkStart + 1e4));
+      list3.push(...right.slice(chunkStart, chunkStart + 1e4));
       chunkStart += 1e4;
     }
   }
@@ -7426,11 +7477,11 @@ function initializeFactory(field) {
       if (code === null) {
         return true;
       }
-      const list2 = constructs2[code];
+      const list3 = constructs2[code];
       let index2 = -1;
-      if (list2) {
-        while (++index2 < list2.length) {
-          const item = list2[index2];
+      if (list3) {
+        while (++index2 < list3.length) {
+          const item = list3[index2];
           if (!item.previous || item.previous.call(self, self.previous)) {
             return true;
           }
@@ -7768,22 +7819,22 @@ function createTokenizer(parser, initialize, from) {
         function start(code) {
           const left = code !== null && map[code];
           const all2 = code !== null && map.null;
-          const list2 = [
+          const list3 = [
             // To do: add more extension tests.
             /* c8 ignore next 2 */
             ...Array.isArray(left) ? left : left ? [left] : [],
             ...Array.isArray(all2) ? all2 : all2 ? [all2] : []
           ];
-          return handleListOfConstructs(list2)(code);
+          return handleListOfConstructs(list3)(code);
         }
       }
-      function handleListOfConstructs(list2) {
-        listOfConstructs = list2;
+      function handleListOfConstructs(list3) {
+        listOfConstructs = list3;
         constructIndex = 0;
-        if (list2.length === 0) {
+        if (list3.length === 0) {
           return bogusState;
         }
-        return handleConstruct(list2[constructIndex]);
+        return handleConstruct(list3[constructIndex]);
       }
       function handleConstruct(construct) {
         return start;
@@ -8104,8 +8155,8 @@ function compiler(options) {
       link: opener(link),
       listItem: opener(listItem),
       listItemValue: onenterlistitemvalue,
-      listOrdered: opener(list2, onenterlistordered),
-      listUnordered: opener(list2),
+      listOrdered: opener(list3, onenterlistordered),
+      listUnordered: opener(list3),
       paragraph: opener(paragraph),
       reference: onenterreference,
       referenceString: buffer,
@@ -8665,7 +8716,7 @@ function compiler(options) {
       children: []
     };
   }
-  function list2(token) {
+  function list3(token) {
     return {
       type: "list",
       ordered: token.type === "listOrdered",
@@ -8864,7 +8915,7 @@ function formatSourceHeader(title, description, options) {
 async function extractNoteContent(filePath, app, settings) {
   var _a;
   const file = app.vault.getAbstractFileByPath(filePath);
-  if (!(file instanceof import_obsidian4.TFile))
+  if (!(file instanceof import_obsidian6.TFile))
     return null;
   const fullContent = await app.vault.read(file);
   const cache = app.metadataCache.getFileCache(file);
@@ -8956,7 +9007,7 @@ async function findSimilarNotes(title, qmdClient, app, filterLinked, topK, thres
       if (resolved) {
         for (const linkedPath of Object.keys(resolved)) {
           const linkedFile = app.vault.getAbstractFileByPath(linkedPath);
-          if (linkedFile instanceof import_obsidian4.TFile) {
+          if (linkedFile instanceof import_obsidian6.TFile) {
             linkedTitles.add(linkedFile.basename);
           }
         }
@@ -8964,7 +9015,7 @@ async function findSimilarNotes(title, qmdClient, app, filterLinked, topK, thres
       for (const [sourcePath, links] of Object.entries(app.metadataCache.resolvedLinks)) {
         if (activeFile.path in links) {
           const sourceFile = app.vault.getAbstractFileByPath(sourcePath);
-          if (sourceFile instanceof import_obsidian4.TFile) {
+          if (sourceFile instanceof import_obsidian6.TFile) {
             linkedTitles.add(sourceFile.basename);
           }
         }
@@ -8986,7 +9037,7 @@ async function findSimilarNotes(title, qmdClient, app, filterLinked, topK, thres
     let description = "";
     if (vaultPath) {
       const file = app.vault.getAbstractFileByPath(vaultPath);
-      if (file instanceof import_obsidian4.TFile) {
+      if (file instanceof import_obsidian6.TFile) {
         const cache = app.metadataCache.getFileCache(file);
         description = ((_a = cache == null ? void 0 : cache.frontmatter) == null ? void 0 : _a.Description) || "";
       }
@@ -9004,7 +9055,7 @@ async function findSimilarNotes(title, qmdClient, app, filterLinked, topK, thres
 }
 
 // src/views/components.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 var MAX_DROPDOWN_ITEMS = 20;
 function createSourcesEl(container, sources, app) {
   if (sources.length === 0)
@@ -9038,7 +9089,7 @@ function createSourcesEl(container, sources, app) {
   }
 }
 async function renderMarkdown(content3, container, app, component) {
-  await import_obsidian5.MarkdownRenderer.render(app, content3, container, "", component);
+  await import_obsidian7.MarkdownRenderer.render(app, content3, container, "", component);
 }
 function createChipSelector(container, items, placeholder, onChange) {
   const selected = /* @__PURE__ */ new Set();
@@ -9263,7 +9314,7 @@ async function renderFileLink(container, app, component, rawRef, displayText) {
 
 // src/views/relatedNotesView.ts
 var RELATED_NOTES_VIEW_TYPE = "pkm-rag-related-notes";
-var RelatedNotesView = class extends import_obsidian6.ItemView {
+var RelatedNotesView = class extends import_obsidian8.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.selectedCollection = "";
@@ -9307,7 +9358,7 @@ var RelatedNotesView = class extends import_obsidian6.ItemView {
       const collectionFilterEl = container.createDiv({
         cls: "pkm-rag-related-collection-filter"
       });
-      const { cleanup } = createCollectionFilter(
+      const { cleanup: cleanup2 } = createCollectionFilter(
         collectionFilterEl,
         collections,
         this.selectedCollection,
@@ -9316,7 +9367,7 @@ var RelatedNotesView = class extends import_obsidian6.ItemView {
           this.refresh();
         }
       );
-      this.cleanupFns.push(cleanup);
+      this.cleanupFns.push(cleanup2);
     }
     this.resultsContainer = container.createDiv({
       cls: "pkm-rag-related-results"
@@ -9395,10 +9446,10 @@ var RelatedNotesView = class extends import_obsidian6.ItemView {
 };
 
 // src/views/chatView.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 
 // src/rag/modes.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian9 = require("obsidian");
 
 // src/rag/prompts.ts
 var EXPLORE_SYSTEM_PROMPT = `You are a knowledge assistant that answers questions using ONLY the provided context from personal notes.
@@ -9808,7 +9859,7 @@ async function runUpdaterMode(title, qmdClient, ollamaClient, app, settings, onT
     };
   }
   const targetFile = app.vault.getAbstractFileByPath(targetNote.filePath);
-  if (!(targetFile instanceof import_obsidian7.TFile)) {
+  if (!(targetFile instanceof import_obsidian9.TFile)) {
     return {
       answer: `Cannot find file for "${title}".`,
       sources: []
@@ -9818,7 +9869,7 @@ async function runUpdaterMode(title, qmdClient, ollamaClient, app, settings, onT
   for (const [sourcePath, links] of Object.entries(app.metadataCache.resolvedLinks)) {
     if (targetNote.filePath in links) {
       const sourceFile = app.vault.getAbstractFileByPath(sourcePath);
-      if (sourceFile instanceof import_obsidian7.TFile) {
+      if (sourceFile instanceof import_obsidian9.TFile) {
         backlinkFiles.push(sourceFile);
       }
     }
@@ -9878,7 +9929,7 @@ ${blNote.content}`);
 
 // src/views/chatView.ts
 var CHAT_VIEW_TYPE = "pkm-rag-chat";
-var ChatView = class extends import_obsidian8.ItemView {
+var ChatView = class extends import_obsidian10.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.currentMode = "explore";
@@ -9965,7 +10016,7 @@ var ChatView = class extends import_obsidian8.ItemView {
   async initCollectionFilter(container) {
     const collections = await this.plugin.qmdClient.getCollections();
     if (collections.length > 0) {
-      const { cleanup } = createCollectionFilter(
+      const { cleanup: cleanup2 } = createCollectionFilter(
         container,
         collections,
         this.selectedCollection,
@@ -9973,7 +10024,7 @@ var ChatView = class extends import_obsidian8.ItemView {
           this.selectedCollection = collection;
         }
       );
-      this.cleanupFns.push(cleanup);
+      this.cleanupFns.push(cleanup2);
     }
   }
   async onClose() {
@@ -10012,7 +10063,7 @@ var ChatView = class extends import_obsidian8.ItemView {
           text: "Select 2+ notes to discover how they relate.",
           cls: "pkm-rag-mode-tip"
         });
-        const { cleanup } = createNoteSelector(
+        const { cleanup: cleanup2 } = createNoteSelector(
           this.modeConfigEl,
           titles,
           "Search notes...",
@@ -10021,7 +10072,7 @@ var ChatView = class extends import_obsidian8.ItemView {
             this.selectedNotes = selected;
           }
         );
-        this.modeConfigCleanupFns.push(cleanup);
+        this.modeConfigCleanupFns.push(cleanup2);
         break;
       }
       case "gap": {
@@ -10036,7 +10087,7 @@ var ChatView = class extends import_obsidian8.ItemView {
           text: "Select a note to challenge its reasoning.",
           cls: "pkm-rag-mode-tip"
         });
-        const { cleanup } = createNoteSelector(
+        const { cleanup: cleanup2 } = createNoteSelector(
           this.modeConfigEl,
           titles,
           "Search for a note...",
@@ -10045,7 +10096,7 @@ var ChatView = class extends import_obsidian8.ItemView {
             this.selectedNotes = selected;
           }
         );
-        this.modeConfigCleanupFns.push(cleanup);
+        this.modeConfigCleanupFns.push(cleanup2);
         break;
       }
       case "redundancy": {
@@ -10085,7 +10136,7 @@ var ChatView = class extends import_obsidian8.ItemView {
           this.renderModeConfig();
         });
         if (this.redundancyInputType === "note") {
-          const { cleanup } = createNoteSelector(
+          const { cleanup: cleanup2 } = createNoteSelector(
             this.modeConfigEl,
             titles,
             "Search for a note...",
@@ -10094,7 +10145,7 @@ var ChatView = class extends import_obsidian8.ItemView {
               this.selectedNotes = selected;
             }
           );
-          this.modeConfigCleanupFns.push(cleanup);
+          this.modeConfigCleanupFns.push(cleanup2);
         }
         break;
       }
@@ -10103,7 +10154,7 @@ var ChatView = class extends import_obsidian8.ItemView {
           text: "Select a note to find missing insights from its backlinks.",
           cls: "pkm-rag-mode-tip"
         });
-        const { cleanup } = createNoteSelector(
+        const { cleanup: cleanup2 } = createNoteSelector(
           this.modeConfigEl,
           titles,
           "Search for a note...",
@@ -10112,7 +10163,7 @@ var ChatView = class extends import_obsidian8.ItemView {
             this.selectedNotes = selected;
           }
         );
-        this.modeConfigCleanupFns.push(cleanup);
+        this.modeConfigCleanupFns.push(cleanup2);
         break;
       }
     }
@@ -10392,7 +10443,7 @@ var ChatView = class extends import_obsidian8.ItemView {
 };
 
 // src/views/cliConsoleView.ts
-var import_obsidian9 = require("obsidian");
+var import_obsidian13 = require("obsidian");
 
 // src/cli/resultNormalizer.ts
 function normalizeResults(toolId, json) {
@@ -10517,6 +10568,3164 @@ function normalizeQvoidFindSimilarNdjson(stdout) {
   return results.length > 0 ? results : null;
 }
 
+// src/lite/liteClient.ts
+var import_obsidian12 = require("obsidian");
+
+// src/lite/qmdLite.ts
+var import_obsidian11 = require("obsidian");
+
+// node_modules/minisearch/dist/es/index.js
+var ENTRIES = "ENTRIES";
+var KEYS = "KEYS";
+var VALUES = "VALUES";
+var LEAF = "";
+var TreeIterator = class {
+  constructor(set, type) {
+    const node2 = set._tree;
+    const keys = Array.from(node2.keys());
+    this.set = set;
+    this._type = type;
+    this._path = keys.length > 0 ? [{ node: node2, keys }] : [];
+  }
+  next() {
+    const value = this.dive();
+    this.backtrack();
+    return value;
+  }
+  dive() {
+    if (this._path.length === 0) {
+      return { done: true, value: void 0 };
+    }
+    const { node: node2, keys } = last$1(this._path);
+    if (last$1(keys) === LEAF) {
+      return { done: false, value: this.result() };
+    }
+    const child = node2.get(last$1(keys));
+    this._path.push({ node: child, keys: Array.from(child.keys()) });
+    return this.dive();
+  }
+  backtrack() {
+    if (this._path.length === 0) {
+      return;
+    }
+    const keys = last$1(this._path).keys;
+    keys.pop();
+    if (keys.length > 0) {
+      return;
+    }
+    this._path.pop();
+    this.backtrack();
+  }
+  key() {
+    return this.set._prefix + this._path.map(({ keys }) => last$1(keys)).filter((key) => key !== LEAF).join("");
+  }
+  value() {
+    return last$1(this._path).node.get(LEAF);
+  }
+  result() {
+    switch (this._type) {
+      case VALUES:
+        return this.value();
+      case KEYS:
+        return this.key();
+      default:
+        return [this.key(), this.value()];
+    }
+  }
+  [Symbol.iterator]() {
+    return this;
+  }
+};
+var last$1 = (array) => {
+  return array[array.length - 1];
+};
+var fuzzySearch = (node2, query, maxDistance) => {
+  const results = /* @__PURE__ */ new Map();
+  if (query === void 0)
+    return results;
+  const n = query.length + 1;
+  const m = n + maxDistance;
+  const matrix = new Uint8Array(m * n).fill(maxDistance + 1);
+  for (let j = 0; j < n; ++j)
+    matrix[j] = j;
+  for (let i = 1; i < m; ++i)
+    matrix[i * n] = i;
+  recurse(node2, query, maxDistance, results, matrix, 1, n, "");
+  return results;
+};
+var recurse = (node2, query, maxDistance, results, matrix, m, n, prefix) => {
+  const offset = m * n;
+  key:
+    for (const key of node2.keys()) {
+      if (key === LEAF) {
+        const distance = matrix[offset - 1];
+        if (distance <= maxDistance) {
+          results.set(prefix, [node2.get(key), distance]);
+        }
+      } else {
+        let i = m;
+        for (let pos = 0; pos < key.length; ++pos, ++i) {
+          const char = key[pos];
+          const thisRowOffset = n * i;
+          const prevRowOffset = thisRowOffset - n;
+          let minDistance = matrix[thisRowOffset];
+          const jmin = Math.max(0, i - maxDistance - 1);
+          const jmax = Math.min(n - 1, i + maxDistance);
+          for (let j = jmin; j < jmax; ++j) {
+            const different = char !== query[j];
+            const rpl = matrix[prevRowOffset + j] + +different;
+            const del = matrix[prevRowOffset + j + 1] + 1;
+            const ins = matrix[thisRowOffset + j] + 1;
+            const dist = matrix[thisRowOffset + j + 1] = Math.min(rpl, del, ins);
+            if (dist < minDistance)
+              minDistance = dist;
+          }
+          if (minDistance > maxDistance) {
+            continue key;
+          }
+        }
+        recurse(node2.get(key), query, maxDistance, results, matrix, i, n, prefix + key);
+      }
+    }
+};
+var SearchableMap = class {
+  /**
+   * The constructor is normally called without arguments, creating an empty
+   * map. In order to create a {@link SearchableMap} from an iterable or from an
+   * object, check {@link SearchableMap.from} and {@link
+   * SearchableMap.fromObject}.
+   *
+   * The constructor arguments are for internal use, when creating derived
+   * mutable views of a map at a prefix.
+   */
+  constructor(tree = /* @__PURE__ */ new Map(), prefix = "") {
+    this._size = void 0;
+    this._tree = tree;
+    this._prefix = prefix;
+  }
+  /**
+   * Creates and returns a mutable view of this {@link SearchableMap},
+   * containing only entries that share the given prefix.
+   *
+   * ### Usage:
+   *
+   * ```javascript
+   * let map = new SearchableMap()
+   * map.set("unicorn", 1)
+   * map.set("universe", 2)
+   * map.set("university", 3)
+   * map.set("unique", 4)
+   * map.set("hello", 5)
+   *
+   * let uni = map.atPrefix("uni")
+   * uni.get("unique") // => 4
+   * uni.get("unicorn") // => 1
+   * uni.get("hello") // => undefined
+   *
+   * let univer = map.atPrefix("univer")
+   * univer.get("unique") // => undefined
+   * univer.get("universe") // => 2
+   * univer.get("university") // => 3
+   * ```
+   *
+   * @param prefix  The prefix
+   * @return A {@link SearchableMap} representing a mutable view of the original
+   * Map at the given prefix
+   */
+  atPrefix(prefix) {
+    if (!prefix.startsWith(this._prefix)) {
+      throw new Error("Mismatched prefix");
+    }
+    const [node2, path] = trackDown(this._tree, prefix.slice(this._prefix.length));
+    if (node2 === void 0) {
+      const [parentNode, key] = last(path);
+      for (const k of parentNode.keys()) {
+        if (k !== LEAF && k.startsWith(key)) {
+          const node3 = /* @__PURE__ */ new Map();
+          node3.set(k.slice(key.length), parentNode.get(k));
+          return new SearchableMap(node3, prefix);
+        }
+      }
+    }
+    return new SearchableMap(node2, prefix);
+  }
+  /**
+   * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map/clear
+   */
+  clear() {
+    this._size = void 0;
+    this._tree.clear();
+  }
+  /**
+   * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map/delete
+   * @param key  Key to delete
+   */
+  delete(key) {
+    this._size = void 0;
+    return remove(this._tree, key);
+  }
+  /**
+   * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map/entries
+   * @return An iterator iterating through `[key, value]` entries.
+   */
+  entries() {
+    return new TreeIterator(this, ENTRIES);
+  }
+  /**
+   * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map/forEach
+   * @param fn  Iteration function
+   */
+  forEach(fn) {
+    for (const [key, value] of this) {
+      fn(key, value, this);
+    }
+  }
+  /**
+   * Returns a Map of all the entries that have a key within the given edit
+   * distance from the search key. The keys of the returned Map are the matching
+   * keys, while the values are two-element arrays where the first element is
+   * the value associated to the key, and the second is the edit distance of the
+   * key to the search key.
+   *
+   * ### Usage:
+   *
+   * ```javascript
+   * let map = new SearchableMap()
+   * map.set('hello', 'world')
+   * map.set('hell', 'yeah')
+   * map.set('ciao', 'mondo')
+   *
+   * // Get all entries that match the key 'hallo' with a maximum edit distance of 2
+   * map.fuzzyGet('hallo', 2)
+   * // => Map(2) { 'hello' => ['world', 1], 'hell' => ['yeah', 2] }
+   *
+   * // In the example, the "hello" key has value "world" and edit distance of 1
+   * // (change "e" to "a"), the key "hell" has value "yeah" and edit distance of 2
+   * // (change "e" to "a", delete "o")
+   * ```
+   *
+   * @param key  The search key
+   * @param maxEditDistance  The maximum edit distance (Levenshtein)
+   * @return A Map of the matching keys to their value and edit distance
+   */
+  fuzzyGet(key, maxEditDistance) {
+    return fuzzySearch(this._tree, key, maxEditDistance);
+  }
+  /**
+   * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map/get
+   * @param key  Key to get
+   * @return Value associated to the key, or `undefined` if the key is not
+   * found.
+   */
+  get(key) {
+    const node2 = lookup(this._tree, key);
+    return node2 !== void 0 ? node2.get(LEAF) : void 0;
+  }
+  /**
+   * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map/has
+   * @param key  Key
+   * @return True if the key is in the map, false otherwise
+   */
+  has(key) {
+    const node2 = lookup(this._tree, key);
+    return node2 !== void 0 && node2.has(LEAF);
+  }
+  /**
+   * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map/keys
+   * @return An `Iterable` iterating through keys
+   */
+  keys() {
+    return new TreeIterator(this, KEYS);
+  }
+  /**
+   * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map/set
+   * @param key  Key to set
+   * @param value  Value to associate to the key
+   * @return The {@link SearchableMap} itself, to allow chaining
+   */
+  set(key, value) {
+    if (typeof key !== "string") {
+      throw new Error("key must be a string");
+    }
+    this._size = void 0;
+    const node2 = createPath(this._tree, key);
+    node2.set(LEAF, value);
+    return this;
+  }
+  /**
+   * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map/size
+   */
+  get size() {
+    if (this._size) {
+      return this._size;
+    }
+    this._size = 0;
+    const iter = this.entries();
+    while (!iter.next().done)
+      this._size += 1;
+    return this._size;
+  }
+  /**
+   * Updates the value at the given key using the provided function. The function
+   * is called with the current value at the key, and its return value is used as
+   * the new value to be set.
+   *
+   * ### Example:
+   *
+   * ```javascript
+   * // Increment the current value by one
+   * searchableMap.update('somekey', (currentValue) => currentValue == null ? 0 : currentValue + 1)
+   * ```
+   *
+   * If the value at the given key is or will be an object, it might not require
+   * re-assignment. In that case it is better to use `fetch()`, because it is
+   * faster.
+   *
+   * @param key  The key to update
+   * @param fn  The function used to compute the new value from the current one
+   * @return The {@link SearchableMap} itself, to allow chaining
+   */
+  update(key, fn) {
+    if (typeof key !== "string") {
+      throw new Error("key must be a string");
+    }
+    this._size = void 0;
+    const node2 = createPath(this._tree, key);
+    node2.set(LEAF, fn(node2.get(LEAF)));
+    return this;
+  }
+  /**
+   * Fetches the value of the given key. If the value does not exist, calls the
+   * given function to create a new value, which is inserted at the given key
+   * and subsequently returned.
+   *
+   * ### Example:
+   *
+   * ```javascript
+   * const map = searchableMap.fetch('somekey', () => new Map())
+   * map.set('foo', 'bar')
+   * ```
+   *
+   * @param key  The key to update
+   * @param initial  A function that creates a new value if the key does not exist
+   * @return The existing or new value at the given key
+   */
+  fetch(key, initial) {
+    if (typeof key !== "string") {
+      throw new Error("key must be a string");
+    }
+    this._size = void 0;
+    const node2 = createPath(this._tree, key);
+    let value = node2.get(LEAF);
+    if (value === void 0) {
+      node2.set(LEAF, value = initial());
+    }
+    return value;
+  }
+  /**
+   * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map/values
+   * @return An `Iterable` iterating through values.
+   */
+  values() {
+    return new TreeIterator(this, VALUES);
+  }
+  /**
+   * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map/@@iterator
+   */
+  [Symbol.iterator]() {
+    return this.entries();
+  }
+  /**
+   * Creates a {@link SearchableMap} from an `Iterable` of entries
+   *
+   * @param entries  Entries to be inserted in the {@link SearchableMap}
+   * @return A new {@link SearchableMap} with the given entries
+   */
+  static from(entries) {
+    const tree = new SearchableMap();
+    for (const [key, value] of entries) {
+      tree.set(key, value);
+    }
+    return tree;
+  }
+  /**
+   * Creates a {@link SearchableMap} from the iterable properties of a JavaScript object
+   *
+   * @param object  Object of entries for the {@link SearchableMap}
+   * @return A new {@link SearchableMap} with the given entries
+   */
+  static fromObject(object) {
+    return SearchableMap.from(Object.entries(object));
+  }
+};
+var trackDown = (tree, key, path = []) => {
+  if (key.length === 0 || tree == null) {
+    return [tree, path];
+  }
+  for (const k of tree.keys()) {
+    if (k !== LEAF && key.startsWith(k)) {
+      path.push([tree, k]);
+      return trackDown(tree.get(k), key.slice(k.length), path);
+    }
+  }
+  path.push([tree, key]);
+  return trackDown(void 0, "", path);
+};
+var lookup = (tree, key) => {
+  if (key.length === 0 || tree == null) {
+    return tree;
+  }
+  for (const k of tree.keys()) {
+    if (k !== LEAF && key.startsWith(k)) {
+      return lookup(tree.get(k), key.slice(k.length));
+    }
+  }
+};
+var createPath = (node2, key) => {
+  const keyLength = key.length;
+  outer:
+    for (let pos = 0; node2 && pos < keyLength; ) {
+      for (const k of node2.keys()) {
+        if (k !== LEAF && key[pos] === k[0]) {
+          const len = Math.min(keyLength - pos, k.length);
+          let offset = 1;
+          while (offset < len && key[pos + offset] === k[offset])
+            ++offset;
+          const child2 = node2.get(k);
+          if (offset === k.length) {
+            node2 = child2;
+          } else {
+            const intermediate = /* @__PURE__ */ new Map();
+            intermediate.set(k.slice(offset), child2);
+            node2.set(key.slice(pos, pos + offset), intermediate);
+            node2.delete(k);
+            node2 = intermediate;
+          }
+          pos += offset;
+          continue outer;
+        }
+      }
+      const child = /* @__PURE__ */ new Map();
+      node2.set(key.slice(pos), child);
+      return child;
+    }
+  return node2;
+};
+var remove = (tree, key) => {
+  const [node2, path] = trackDown(tree, key);
+  if (node2 === void 0) {
+    return;
+  }
+  node2.delete(LEAF);
+  if (node2.size === 0) {
+    cleanup(path);
+  } else if (node2.size === 1) {
+    const [key2, value] = node2.entries().next().value;
+    merge(path, key2, value);
+  }
+};
+var cleanup = (path) => {
+  if (path.length === 0) {
+    return;
+  }
+  const [node2, key] = last(path);
+  node2.delete(key);
+  if (node2.size === 0) {
+    cleanup(path.slice(0, -1));
+  } else if (node2.size === 1) {
+    const [key2, value] = node2.entries().next().value;
+    if (key2 !== LEAF) {
+      merge(path.slice(0, -1), key2, value);
+    }
+  }
+};
+var merge = (path, key, value) => {
+  if (path.length === 0) {
+    return;
+  }
+  const [node2, nodeKey] = last(path);
+  node2.set(nodeKey + key, value);
+  node2.delete(nodeKey);
+};
+var last = (array) => {
+  return array[array.length - 1];
+};
+var OR = "or";
+var AND = "and";
+var AND_NOT = "and_not";
+var MiniSearch = class {
+  /**
+   * @param options  Configuration options
+   *
+   * ### Examples:
+   *
+   * ```javascript
+   * // Create a search engine that indexes the 'title' and 'text' fields of your
+   * // documents:
+   * const miniSearch = new MiniSearch({ fields: ['title', 'text'] })
+   * ```
+   *
+   * ### ID Field:
+   *
+   * ```javascript
+   * // Your documents are assumed to include a unique 'id' field, but if you want
+   * // to use a different field for document identification, you can set the
+   * // 'idField' option:
+   * const miniSearch = new MiniSearch({ idField: 'key', fields: ['title', 'text'] })
+   * ```
+   *
+   * ### Options and defaults:
+   *
+   * ```javascript
+   * // The full set of options (here with their default value) is:
+   * const miniSearch = new MiniSearch({
+   *   // idField: field that uniquely identifies a document
+   *   idField: 'id',
+   *
+   *   // extractField: function used to get the value of a field in a document.
+   *   // By default, it assumes the document is a flat object with field names as
+   *   // property keys and field values as string property values, but custom logic
+   *   // can be implemented by setting this option to a custom extractor function.
+   *   extractField: (document, fieldName) => document[fieldName],
+   *
+   *   // tokenize: function used to split fields into individual terms. By
+   *   // default, it is also used to tokenize search queries, unless a specific
+   *   // `tokenize` search option is supplied. When tokenizing an indexed field,
+   *   // the field name is passed as the second argument.
+   *   tokenize: (string, _fieldName) => string.split(SPACE_OR_PUNCTUATION),
+   *
+   *   // processTerm: function used to process each tokenized term before
+   *   // indexing. It can be used for stemming and normalization. Return a falsy
+   *   // value in order to discard a term. By default, it is also used to process
+   *   // search queries, unless a specific `processTerm` option is supplied as a
+   *   // search option. When processing a term from a indexed field, the field
+   *   // name is passed as the second argument.
+   *   processTerm: (term, _fieldName) => term.toLowerCase(),
+   *
+   *   // searchOptions: default search options, see the `search` method for
+   *   // details
+   *   searchOptions: undefined,
+   *
+   *   // fields: document fields to be indexed. Mandatory, but not set by default
+   *   fields: undefined
+   *
+   *   // storeFields: document fields to be stored and returned as part of the
+   *   // search results.
+   *   storeFields: []
+   * })
+   * ```
+   */
+  constructor(options) {
+    if ((options === null || options === void 0 ? void 0 : options.fields) == null) {
+      throw new Error('MiniSearch: option "fields" must be provided');
+    }
+    const autoVacuum = options.autoVacuum == null || options.autoVacuum === true ? defaultAutoVacuumOptions : options.autoVacuum;
+    this._options = {
+      ...defaultOptions,
+      ...options,
+      autoVacuum,
+      searchOptions: { ...defaultSearchOptions, ...options.searchOptions || {} },
+      autoSuggestOptions: { ...defaultAutoSuggestOptions, ...options.autoSuggestOptions || {} }
+    };
+    this._index = new SearchableMap();
+    this._documentCount = 0;
+    this._documentIds = /* @__PURE__ */ new Map();
+    this._idToShortId = /* @__PURE__ */ new Map();
+    this._fieldIds = {};
+    this._fieldLength = /* @__PURE__ */ new Map();
+    this._avgFieldLength = [];
+    this._nextId = 0;
+    this._storedFields = /* @__PURE__ */ new Map();
+    this._dirtCount = 0;
+    this._currentVacuum = null;
+    this._enqueuedVacuum = null;
+    this._enqueuedVacuumConditions = defaultVacuumConditions;
+    this.addFields(this._options.fields);
+  }
+  /**
+   * Adds a document to the index
+   *
+   * @param document  The document to be indexed
+   */
+  add(document4) {
+    const { extractField, stringifyField, tokenize: tokenize2, processTerm, fields, idField } = this._options;
+    const id = extractField(document4, idField);
+    if (id == null) {
+      throw new Error(`MiniSearch: document does not have ID field "${idField}"`);
+    }
+    if (this._idToShortId.has(id)) {
+      throw new Error(`MiniSearch: duplicate ID ${id}`);
+    }
+    const shortDocumentId = this.addDocumentId(id);
+    this.saveStoredFields(shortDocumentId, document4);
+    for (const field of fields) {
+      const fieldValue2 = extractField(document4, field);
+      if (fieldValue2 == null)
+        continue;
+      const tokens = tokenize2(stringifyField(fieldValue2, field), field);
+      const fieldId = this._fieldIds[field];
+      const uniqueTerms = new Set(tokens).size;
+      this.addFieldLength(shortDocumentId, fieldId, this._documentCount - 1, uniqueTerms);
+      for (const term of tokens) {
+        const processedTerm = processTerm(term, field);
+        if (Array.isArray(processedTerm)) {
+          for (const t of processedTerm) {
+            this.addTerm(fieldId, shortDocumentId, t);
+          }
+        } else if (processedTerm) {
+          this.addTerm(fieldId, shortDocumentId, processedTerm);
+        }
+      }
+    }
+  }
+  /**
+   * Adds all the given documents to the index
+   *
+   * @param documents  An array of documents to be indexed
+   */
+  addAll(documents) {
+    for (const document4 of documents)
+      this.add(document4);
+  }
+  /**
+   * Adds all the given documents to the index asynchronously.
+   *
+   * Returns a promise that resolves (to `undefined`) when the indexing is done.
+   * This method is useful when index many documents, to avoid blocking the main
+   * thread. The indexing is performed asynchronously and in chunks.
+   *
+   * @param documents  An array of documents to be indexed
+   * @param options  Configuration options
+   * @return A promise resolving to `undefined` when the indexing is done
+   */
+  addAllAsync(documents, options = {}) {
+    const { chunkSize = 10 } = options;
+    const acc = { chunk: [], promise: Promise.resolve() };
+    const { chunk, promise } = documents.reduce(({ chunk: chunk2, promise: promise2 }, document4, i) => {
+      chunk2.push(document4);
+      if ((i + 1) % chunkSize === 0) {
+        return {
+          chunk: [],
+          promise: promise2.then(() => new Promise((resolve) => setTimeout(resolve, 0))).then(() => this.addAll(chunk2))
+        };
+      } else {
+        return { chunk: chunk2, promise: promise2 };
+      }
+    }, acc);
+    return promise.then(() => this.addAll(chunk));
+  }
+  /**
+   * Removes the given document from the index.
+   *
+   * The document to remove must NOT have changed between indexing and removal,
+   * otherwise the index will be corrupted.
+   *
+   * This method requires passing the full document to be removed (not just the
+   * ID), and immediately removes the document from the inverted index, allowing
+   * memory to be released. A convenient alternative is {@link
+   * MiniSearch#discard}, which needs only the document ID, and has the same
+   * visible effect, but delays cleaning up the index until the next vacuuming.
+   *
+   * @param document  The document to be removed
+   */
+  remove(document4) {
+    const { tokenize: tokenize2, processTerm, extractField, stringifyField, fields, idField } = this._options;
+    const id = extractField(document4, idField);
+    if (id == null) {
+      throw new Error(`MiniSearch: document does not have ID field "${idField}"`);
+    }
+    const shortId = this._idToShortId.get(id);
+    if (shortId == null) {
+      throw new Error(`MiniSearch: cannot remove document with ID ${id}: it is not in the index`);
+    }
+    for (const field of fields) {
+      const fieldValue2 = extractField(document4, field);
+      if (fieldValue2 == null)
+        continue;
+      const tokens = tokenize2(stringifyField(fieldValue2, field), field);
+      const fieldId = this._fieldIds[field];
+      const uniqueTerms = new Set(tokens).size;
+      this.removeFieldLength(shortId, fieldId, this._documentCount, uniqueTerms);
+      for (const term of tokens) {
+        const processedTerm = processTerm(term, field);
+        if (Array.isArray(processedTerm)) {
+          for (const t of processedTerm) {
+            this.removeTerm(fieldId, shortId, t);
+          }
+        } else if (processedTerm) {
+          this.removeTerm(fieldId, shortId, processedTerm);
+        }
+      }
+    }
+    this._storedFields.delete(shortId);
+    this._documentIds.delete(shortId);
+    this._idToShortId.delete(id);
+    this._fieldLength.delete(shortId);
+    this._documentCount -= 1;
+  }
+  /**
+   * Removes all the given documents from the index. If called with no arguments,
+   * it removes _all_ documents from the index.
+   *
+   * @param documents  The documents to be removed. If this argument is omitted,
+   * all documents are removed. Note that, for removing all documents, it is
+   * more efficient to call this method with no arguments than to pass all
+   * documents.
+   */
+  removeAll(documents) {
+    if (documents) {
+      for (const document4 of documents)
+        this.remove(document4);
+    } else if (arguments.length > 0) {
+      throw new Error("Expected documents to be present. Omit the argument to remove all documents.");
+    } else {
+      this._index = new SearchableMap();
+      this._documentCount = 0;
+      this._documentIds = /* @__PURE__ */ new Map();
+      this._idToShortId = /* @__PURE__ */ new Map();
+      this._fieldLength = /* @__PURE__ */ new Map();
+      this._avgFieldLength = [];
+      this._storedFields = /* @__PURE__ */ new Map();
+      this._nextId = 0;
+    }
+  }
+  /**
+   * Discards the document with the given ID, so it won't appear in search results
+   *
+   * It has the same visible effect of {@link MiniSearch.remove} (both cause the
+   * document to stop appearing in searches), but a different effect on the
+   * internal data structures:
+   *
+   *   - {@link MiniSearch#remove} requires passing the full document to be
+   *   removed as argument, and removes it from the inverted index immediately.
+   *
+   *   - {@link MiniSearch#discard} instead only needs the document ID, and
+   *   works by marking the current version of the document as discarded, so it
+   *   is immediately ignored by searches. This is faster and more convenient
+   *   than {@link MiniSearch#remove}, but the index is not immediately
+   *   modified. To take care of that, vacuuming is performed after a certain
+   *   number of documents are discarded, cleaning up the index and allowing
+   *   memory to be released.
+   *
+   * After discarding a document, it is possible to re-add a new version, and
+   * only the new version will appear in searches. In other words, discarding
+   * and re-adding a document works exactly like removing and re-adding it. The
+   * {@link MiniSearch.replace} method can also be used to replace a document
+   * with a new version.
+   *
+   * #### Details about vacuuming
+   *
+   * Repetite calls to this method would leave obsolete document references in
+   * the index, invisible to searches. Two mechanisms take care of cleaning up:
+   * clean up during search, and vacuuming.
+   *
+   *   - Upon search, whenever a discarded ID is found (and ignored for the
+   *   results), references to the discarded document are removed from the
+   *   inverted index entries for the search terms. This ensures that subsequent
+   *   searches for the same terms do not need to skip these obsolete references
+   *   again.
+   *
+   *   - In addition, vacuuming is performed automatically by default (see the
+   *   `autoVacuum` field in {@link Options}) after a certain number of
+   *   documents are discarded. Vacuuming traverses all terms in the index,
+   *   cleaning up all references to discarded documents. Vacuuming can also be
+   *   triggered manually by calling {@link MiniSearch#vacuum}.
+   *
+   * @param id  The ID of the document to be discarded
+   */
+  discard(id) {
+    const shortId = this._idToShortId.get(id);
+    if (shortId == null) {
+      throw new Error(`MiniSearch: cannot discard document with ID ${id}: it is not in the index`);
+    }
+    this._idToShortId.delete(id);
+    this._documentIds.delete(shortId);
+    this._storedFields.delete(shortId);
+    (this._fieldLength.get(shortId) || []).forEach((fieldLength, fieldId) => {
+      this.removeFieldLength(shortId, fieldId, this._documentCount, fieldLength);
+    });
+    this._fieldLength.delete(shortId);
+    this._documentCount -= 1;
+    this._dirtCount += 1;
+    this.maybeAutoVacuum();
+  }
+  maybeAutoVacuum() {
+    if (this._options.autoVacuum === false) {
+      return;
+    }
+    const { minDirtFactor, minDirtCount, batchSize, batchWait } = this._options.autoVacuum;
+    this.conditionalVacuum({ batchSize, batchWait }, { minDirtCount, minDirtFactor });
+  }
+  /**
+   * Discards the documents with the given IDs, so they won't appear in search
+   * results
+   *
+   * It is equivalent to calling {@link MiniSearch#discard} for all the given
+   * IDs, but with the optimization of triggering at most one automatic
+   * vacuuming at the end.
+   *
+   * Note: to remove all documents from the index, it is faster and more
+   * convenient to call {@link MiniSearch.removeAll} with no argument, instead
+   * of passing all IDs to this method.
+   */
+  discardAll(ids) {
+    const autoVacuum = this._options.autoVacuum;
+    try {
+      this._options.autoVacuum = false;
+      for (const id of ids) {
+        this.discard(id);
+      }
+    } finally {
+      this._options.autoVacuum = autoVacuum;
+    }
+    this.maybeAutoVacuum();
+  }
+  /**
+   * It replaces an existing document with the given updated version
+   *
+   * It works by discarding the current version and adding the updated one, so
+   * it is functionally equivalent to calling {@link MiniSearch#discard}
+   * followed by {@link MiniSearch#add}. The ID of the updated document should
+   * be the same as the original one.
+   *
+   * Since it uses {@link MiniSearch#discard} internally, this method relies on
+   * vacuuming to clean up obsolete document references from the index, allowing
+   * memory to be released (see {@link MiniSearch#discard}).
+   *
+   * @param updatedDocument  The updated document to replace the old version
+   * with
+   */
+  replace(updatedDocument) {
+    const { idField, extractField } = this._options;
+    const id = extractField(updatedDocument, idField);
+    this.discard(id);
+    this.add(updatedDocument);
+  }
+  /**
+   * Triggers a manual vacuuming, cleaning up references to discarded documents
+   * from the inverted index
+   *
+   * Vacuuming is only useful for applications that use the {@link
+   * MiniSearch#discard} or {@link MiniSearch#replace} methods.
+   *
+   * By default, vacuuming is performed automatically when needed (controlled by
+   * the `autoVacuum` field in {@link Options}), so there is usually no need to
+   * call this method, unless one wants to make sure to perform vacuuming at a
+   * specific moment.
+   *
+   * Vacuuming traverses all terms in the inverted index in batches, and cleans
+   * up references to discarded documents from the posting list, allowing memory
+   * to be released.
+   *
+   * The method takes an optional object as argument with the following keys:
+   *
+   *   - `batchSize`: the size of each batch (1000 by default)
+   *
+   *   - `batchWait`: the number of milliseconds to wait between batches (10 by
+   *   default)
+   *
+   * On large indexes, vacuuming could have a non-negligible cost: batching
+   * avoids blocking the thread for long, diluting this cost so that it is not
+   * negatively affecting the application. Nonetheless, this method should only
+   * be called when necessary, and relying on automatic vacuuming is usually
+   * better.
+   *
+   * It returns a promise that resolves (to undefined) when the clean up is
+   * completed. If vacuuming is already ongoing at the time this method is
+   * called, a new one is enqueued immediately after the ongoing one, and a
+   * corresponding promise is returned. However, no more than one vacuuming is
+   * enqueued on top of the ongoing one, even if this method is called more
+   * times (enqueuing multiple ones would be useless).
+   *
+   * @param options  Configuration options for the batch size and delay. See
+   * {@link VacuumOptions}.
+   */
+  vacuum(options = {}) {
+    return this.conditionalVacuum(options);
+  }
+  conditionalVacuum(options, conditions) {
+    if (this._currentVacuum) {
+      this._enqueuedVacuumConditions = this._enqueuedVacuumConditions && conditions;
+      if (this._enqueuedVacuum != null) {
+        return this._enqueuedVacuum;
+      }
+      this._enqueuedVacuum = this._currentVacuum.then(() => {
+        const conditions2 = this._enqueuedVacuumConditions;
+        this._enqueuedVacuumConditions = defaultVacuumConditions;
+        return this.performVacuuming(options, conditions2);
+      });
+      return this._enqueuedVacuum;
+    }
+    if (this.vacuumConditionsMet(conditions) === false) {
+      return Promise.resolve();
+    }
+    this._currentVacuum = this.performVacuuming(options);
+    return this._currentVacuum;
+  }
+  async performVacuuming(options, conditions) {
+    const initialDirtCount = this._dirtCount;
+    if (this.vacuumConditionsMet(conditions)) {
+      const batchSize = options.batchSize || defaultVacuumOptions.batchSize;
+      const batchWait = options.batchWait || defaultVacuumOptions.batchWait;
+      let i = 1;
+      for (const [term, fieldsData] of this._index) {
+        for (const [fieldId, fieldIndex] of fieldsData) {
+          for (const [shortId] of fieldIndex) {
+            if (this._documentIds.has(shortId)) {
+              continue;
+            }
+            if (fieldIndex.size <= 1) {
+              fieldsData.delete(fieldId);
+            } else {
+              fieldIndex.delete(shortId);
+            }
+          }
+        }
+        if (this._index.get(term).size === 0) {
+          this._index.delete(term);
+        }
+        if (i % batchSize === 0) {
+          await new Promise((resolve) => setTimeout(resolve, batchWait));
+        }
+        i += 1;
+      }
+      this._dirtCount -= initialDirtCount;
+    }
+    await null;
+    this._currentVacuum = this._enqueuedVacuum;
+    this._enqueuedVacuum = null;
+  }
+  vacuumConditionsMet(conditions) {
+    if (conditions == null) {
+      return true;
+    }
+    let { minDirtCount, minDirtFactor } = conditions;
+    minDirtCount = minDirtCount || defaultAutoVacuumOptions.minDirtCount;
+    minDirtFactor = minDirtFactor || defaultAutoVacuumOptions.minDirtFactor;
+    return this.dirtCount >= minDirtCount && this.dirtFactor >= minDirtFactor;
+  }
+  /**
+   * Is `true` if a vacuuming operation is ongoing, `false` otherwise
+   */
+  get isVacuuming() {
+    return this._currentVacuum != null;
+  }
+  /**
+   * The number of documents discarded since the most recent vacuuming
+   */
+  get dirtCount() {
+    return this._dirtCount;
+  }
+  /**
+   * A number between 0 and 1 giving an indication about the proportion of
+   * documents that are discarded, and can therefore be cleaned up by vacuuming.
+   * A value close to 0 means that the index is relatively clean, while a higher
+   * value means that the index is relatively dirty, and vacuuming could release
+   * memory.
+   */
+  get dirtFactor() {
+    return this._dirtCount / (1 + this._documentCount + this._dirtCount);
+  }
+  /**
+   * Returns `true` if a document with the given ID is present in the index and
+   * available for search, `false` otherwise
+   *
+   * @param id  The document ID
+   */
+  has(id) {
+    return this._idToShortId.has(id);
+  }
+  /**
+   * Returns the stored fields (as configured in the `storeFields` constructor
+   * option) for the given document ID. Returns `undefined` if the document is
+   * not present in the index.
+   *
+   * @param id  The document ID
+   */
+  getStoredFields(id) {
+    const shortId = this._idToShortId.get(id);
+    if (shortId == null) {
+      return void 0;
+    }
+    return this._storedFields.get(shortId);
+  }
+  /**
+   * Search for documents matching the given search query.
+   *
+   * The result is a list of scored document IDs matching the query, sorted by
+   * descending score, and each including data about which terms were matched and
+   * in which fields.
+   *
+   * ### Basic usage:
+   *
+   * ```javascript
+   * // Search for "zen art motorcycle" with default options: terms have to match
+   * // exactly, and individual terms are joined with OR
+   * miniSearch.search('zen art motorcycle')
+   * // => [ { id: 2, score: 2.77258, match: { ... } }, { id: 4, score: 1.38629, match: { ... } } ]
+   * ```
+   *
+   * ### Restrict search to specific fields:
+   *
+   * ```javascript
+   * // Search only in the 'title' field
+   * miniSearch.search('zen', { fields: ['title'] })
+   * ```
+   *
+   * ### Field boosting:
+   *
+   * ```javascript
+   * // Boost a field
+   * miniSearch.search('zen', { boost: { title: 2 } })
+   * ```
+   *
+   * ### Prefix search:
+   *
+   * ```javascript
+   * // Search for "moto" with prefix search (it will match documents
+   * // containing terms that start with "moto" or "neuro")
+   * miniSearch.search('moto neuro', { prefix: true })
+   * ```
+   *
+   * ### Fuzzy search:
+   *
+   * ```javascript
+   * // Search for "ismael" with fuzzy search (it will match documents containing
+   * // terms similar to "ismael", with a maximum edit distance of 0.2 term.length
+   * // (rounded to nearest integer)
+   * miniSearch.search('ismael', { fuzzy: 0.2 })
+   * ```
+   *
+   * ### Combining strategies:
+   *
+   * ```javascript
+   * // Mix of exact match, prefix search, and fuzzy search
+   * miniSearch.search('ismael mob', {
+   *  prefix: true,
+   *  fuzzy: 0.2
+   * })
+   * ```
+   *
+   * ### Advanced prefix and fuzzy search:
+   *
+   * ```javascript
+   * // Perform fuzzy and prefix search depending on the search term. Here
+   * // performing prefix and fuzzy search only on terms longer than 3 characters
+   * miniSearch.search('ismael mob', {
+   *  prefix: term => term.length > 3
+   *  fuzzy: term => term.length > 3 ? 0.2 : null
+   * })
+   * ```
+   *
+   * ### Combine with AND:
+   *
+   * ```javascript
+   * // Combine search terms with AND (to match only documents that contain both
+   * // "motorcycle" and "art")
+   * miniSearch.search('motorcycle art', { combineWith: 'AND' })
+   * ```
+   *
+   * ### Combine with AND_NOT:
+   *
+   * There is also an AND_NOT combinator, that finds documents that match the
+   * first term, but do not match any of the other terms. This combinator is
+   * rarely useful with simple queries, and is meant to be used with advanced
+   * query combinations (see later for more details).
+   *
+   * ### Filtering results:
+   *
+   * ```javascript
+   * // Filter only results in the 'fiction' category (assuming that 'category'
+   * // is a stored field)
+   * miniSearch.search('motorcycle art', {
+   *   filter: (result) => result.category === 'fiction'
+   * })
+   * ```
+   *
+   * ### Wildcard query
+   *
+   * Searching for an empty string (assuming the default tokenizer) returns no
+   * results. Sometimes though, one needs to match all documents, like in a
+   * "wildcard" search. This is possible by passing the special value
+   * {@link MiniSearch.wildcard} as the query:
+   *
+   * ```javascript
+   * // Return search results for all documents
+   * miniSearch.search(MiniSearch.wildcard)
+   * ```
+   *
+   * Note that search options such as `filter` and `boostDocument` are still
+   * applied, influencing which results are returned, and their order:
+   *
+   * ```javascript
+   * // Return search results for all documents in the 'fiction' category
+   * miniSearch.search(MiniSearch.wildcard, {
+   *   filter: (result) => result.category === 'fiction'
+   * })
+   * ```
+   *
+   * ### Advanced combination of queries:
+   *
+   * It is possible to combine different subqueries with OR, AND, and AND_NOT,
+   * and even with different search options, by passing a query expression
+   * tree object as the first argument, instead of a string.
+   *
+   * ```javascript
+   * // Search for documents that contain "zen" and ("motorcycle" or "archery")
+   * miniSearch.search({
+   *   combineWith: 'AND',
+   *   queries: [
+   *     'zen',
+   *     {
+   *       combineWith: 'OR',
+   *       queries: ['motorcycle', 'archery']
+   *     }
+   *   ]
+   * })
+   *
+   * // Search for documents that contain ("apple" or "pear") but not "juice" and
+   * // not "tree"
+   * miniSearch.search({
+   *   combineWith: 'AND_NOT',
+   *   queries: [
+   *     {
+   *       combineWith: 'OR',
+   *       queries: ['apple', 'pear']
+   *     },
+   *     'juice',
+   *     'tree'
+   *   ]
+   * })
+   * ```
+   *
+   * Each node in the expression tree can be either a string, or an object that
+   * supports all {@link SearchOptions} fields, plus a `queries` array field for
+   * subqueries.
+   *
+   * Note that, while this can become complicated to do by hand for complex or
+   * deeply nested queries, it provides a formalized expression tree API for
+   * external libraries that implement a parser for custom query languages.
+   *
+   * @param query  Search query
+   * @param searchOptions  Search options. Each option, if not given, defaults to the corresponding value of `searchOptions` given to the constructor, or to the library default.
+   */
+  search(query, searchOptions = {}) {
+    const { searchOptions: globalSearchOptions } = this._options;
+    const searchOptionsWithDefaults = { ...globalSearchOptions, ...searchOptions };
+    const rawResults = this.executeQuery(query, searchOptions);
+    const results = [];
+    for (const [docId, { score, terms, match }] of rawResults) {
+      const quality = terms.length || 1;
+      const result = {
+        id: this._documentIds.get(docId),
+        score: score * quality,
+        terms: Object.keys(match),
+        queryTerms: terms,
+        match
+      };
+      Object.assign(result, this._storedFields.get(docId));
+      if (searchOptionsWithDefaults.filter == null || searchOptionsWithDefaults.filter(result)) {
+        results.push(result);
+      }
+    }
+    if (query === MiniSearch.wildcard && searchOptionsWithDefaults.boostDocument == null) {
+      return results;
+    }
+    results.sort(byScore);
+    return results;
+  }
+  /**
+   * Provide suggestions for the given search query
+   *
+   * The result is a list of suggested modified search queries, derived from the
+   * given search query, each with a relevance score, sorted by descending score.
+   *
+   * By default, it uses the same options used for search, except that by
+   * default it performs prefix search on the last term of the query, and
+   * combine terms with `'AND'` (requiring all query terms to match). Custom
+   * options can be passed as a second argument. Defaults can be changed upon
+   * calling the {@link MiniSearch} constructor, by passing a
+   * `autoSuggestOptions` option.
+   *
+   * ### Basic usage:
+   *
+   * ```javascript
+   * // Get suggestions for 'neuro':
+   * miniSearch.autoSuggest('neuro')
+   * // => [ { suggestion: 'neuromancer', terms: [ 'neuromancer' ], score: 0.46240 } ]
+   * ```
+   *
+   * ### Multiple words:
+   *
+   * ```javascript
+   * // Get suggestions for 'zen ar':
+   * miniSearch.autoSuggest('zen ar')
+   * // => [
+   * //  { suggestion: 'zen archery art', terms: [ 'zen', 'archery', 'art' ], score: 1.73332 },
+   * //  { suggestion: 'zen art', terms: [ 'zen', 'art' ], score: 1.21313 }
+   * // ]
+   * ```
+   *
+   * ### Fuzzy suggestions:
+   *
+   * ```javascript
+   * // Correct spelling mistakes using fuzzy search:
+   * miniSearch.autoSuggest('neromancer', { fuzzy: 0.2 })
+   * // => [ { suggestion: 'neuromancer', terms: [ 'neuromancer' ], score: 1.03998 } ]
+   * ```
+   *
+   * ### Filtering:
+   *
+   * ```javascript
+   * // Get suggestions for 'zen ar', but only within the 'fiction' category
+   * // (assuming that 'category' is a stored field):
+   * miniSearch.autoSuggest('zen ar', {
+   *   filter: (result) => result.category === 'fiction'
+   * })
+   * // => [
+   * //  { suggestion: 'zen archery art', terms: [ 'zen', 'archery', 'art' ], score: 1.73332 },
+   * //  { suggestion: 'zen art', terms: [ 'zen', 'art' ], score: 1.21313 }
+   * // ]
+   * ```
+   *
+   * @param queryString  Query string to be expanded into suggestions
+   * @param options  Search options. The supported options and default values
+   * are the same as for the {@link MiniSearch#search} method, except that by
+   * default prefix search is performed on the last term in the query, and terms
+   * are combined with `'AND'`.
+   * @return  A sorted array of suggestions sorted by relevance score.
+   */
+  autoSuggest(queryString, options = {}) {
+    options = { ...this._options.autoSuggestOptions, ...options };
+    const suggestions = /* @__PURE__ */ new Map();
+    for (const { score, terms } of this.search(queryString, options)) {
+      const phrase = terms.join(" ");
+      const suggestion = suggestions.get(phrase);
+      if (suggestion != null) {
+        suggestion.score += score;
+        suggestion.count += 1;
+      } else {
+        suggestions.set(phrase, { score, terms, count: 1 });
+      }
+    }
+    const results = [];
+    for (const [suggestion, { score, terms, count }] of suggestions) {
+      results.push({ suggestion, terms, score: score / count });
+    }
+    results.sort(byScore);
+    return results;
+  }
+  /**
+   * Total number of documents available to search
+   */
+  get documentCount() {
+    return this._documentCount;
+  }
+  /**
+   * Number of terms in the index
+   */
+  get termCount() {
+    return this._index.size;
+  }
+  /**
+   * Deserializes a JSON index (serialized with `JSON.stringify(miniSearch)`)
+   * and instantiates a MiniSearch instance. It should be given the same options
+   * originally used when serializing the index.
+   *
+   * ### Usage:
+   *
+   * ```javascript
+   * // If the index was serialized with:
+   * let miniSearch = new MiniSearch({ fields: ['title', 'text'] })
+   * miniSearch.addAll(documents)
+   *
+   * const json = JSON.stringify(miniSearch)
+   * // It can later be deserialized like this:
+   * miniSearch = MiniSearch.loadJSON(json, { fields: ['title', 'text'] })
+   * ```
+   *
+   * @param json  JSON-serialized index
+   * @param options  configuration options, same as the constructor
+   * @return An instance of MiniSearch deserialized from the given JSON.
+   */
+  static loadJSON(json, options) {
+    if (options == null) {
+      throw new Error("MiniSearch: loadJSON should be given the same options used when serializing the index");
+    }
+    return this.loadJS(JSON.parse(json), options);
+  }
+  /**
+   * Async equivalent of {@link MiniSearch.loadJSON}
+   *
+   * This function is an alternative to {@link MiniSearch.loadJSON} that returns
+   * a promise, and loads the index in batches, leaving pauses between them to avoid
+   * blocking the main thread. It tends to be slower than the synchronous
+   * version, but does not block the main thread, so it can be a better choice
+   * when deserializing very large indexes.
+   *
+   * @param json  JSON-serialized index
+   * @param options  configuration options, same as the constructor
+   * @return A Promise that will resolve to an instance of MiniSearch deserialized from the given JSON.
+   */
+  static async loadJSONAsync(json, options) {
+    if (options == null) {
+      throw new Error("MiniSearch: loadJSON should be given the same options used when serializing the index");
+    }
+    return this.loadJSAsync(JSON.parse(json), options);
+  }
+  /**
+   * Returns the default value of an option. It will throw an error if no option
+   * with the given name exists.
+   *
+   * @param optionName  Name of the option
+   * @return The default value of the given option
+   *
+   * ### Usage:
+   *
+   * ```javascript
+   * // Get default tokenizer
+   * MiniSearch.getDefault('tokenize')
+   *
+   * // Get default term processor
+   * MiniSearch.getDefault('processTerm')
+   *
+   * // Unknown options will throw an error
+   * MiniSearch.getDefault('notExisting')
+   * // => throws 'MiniSearch: unknown option "notExisting"'
+   * ```
+   */
+  static getDefault(optionName) {
+    if (defaultOptions.hasOwnProperty(optionName)) {
+      return getOwnProperty(defaultOptions, optionName);
+    } else {
+      throw new Error(`MiniSearch: unknown option "${optionName}"`);
+    }
+  }
+  /**
+   * @ignore
+   */
+  static loadJS(js, options) {
+    const { index: index2, documentIds, fieldLength, storedFields, serializationVersion } = js;
+    const miniSearch = this.instantiateMiniSearch(js, options);
+    miniSearch._documentIds = objectToNumericMap(documentIds);
+    miniSearch._fieldLength = objectToNumericMap(fieldLength);
+    miniSearch._storedFields = objectToNumericMap(storedFields);
+    for (const [shortId, id] of miniSearch._documentIds) {
+      miniSearch._idToShortId.set(id, shortId);
+    }
+    for (const [term, data] of index2) {
+      const dataMap = /* @__PURE__ */ new Map();
+      for (const fieldId of Object.keys(data)) {
+        let indexEntry = data[fieldId];
+        if (serializationVersion === 1) {
+          indexEntry = indexEntry.ds;
+        }
+        dataMap.set(parseInt(fieldId, 10), objectToNumericMap(indexEntry));
+      }
+      miniSearch._index.set(term, dataMap);
+    }
+    return miniSearch;
+  }
+  /**
+   * @ignore
+   */
+  static async loadJSAsync(js, options) {
+    const { index: index2, documentIds, fieldLength, storedFields, serializationVersion } = js;
+    const miniSearch = this.instantiateMiniSearch(js, options);
+    miniSearch._documentIds = await objectToNumericMapAsync(documentIds);
+    miniSearch._fieldLength = await objectToNumericMapAsync(fieldLength);
+    miniSearch._storedFields = await objectToNumericMapAsync(storedFields);
+    for (const [shortId, id] of miniSearch._documentIds) {
+      miniSearch._idToShortId.set(id, shortId);
+    }
+    let count = 0;
+    for (const [term, data] of index2) {
+      const dataMap = /* @__PURE__ */ new Map();
+      for (const fieldId of Object.keys(data)) {
+        let indexEntry = data[fieldId];
+        if (serializationVersion === 1) {
+          indexEntry = indexEntry.ds;
+        }
+        dataMap.set(parseInt(fieldId, 10), await objectToNumericMapAsync(indexEntry));
+      }
+      if (++count % 1e3 === 0)
+        await wait(0);
+      miniSearch._index.set(term, dataMap);
+    }
+    return miniSearch;
+  }
+  /**
+   * @ignore
+   */
+  static instantiateMiniSearch(js, options) {
+    const { documentCount, nextId, fieldIds, averageFieldLength, dirtCount, serializationVersion } = js;
+    if (serializationVersion !== 1 && serializationVersion !== 2) {
+      throw new Error("MiniSearch: cannot deserialize an index created with an incompatible version");
+    }
+    const miniSearch = new MiniSearch(options);
+    miniSearch._documentCount = documentCount;
+    miniSearch._nextId = nextId;
+    miniSearch._idToShortId = /* @__PURE__ */ new Map();
+    miniSearch._fieldIds = fieldIds;
+    miniSearch._avgFieldLength = averageFieldLength;
+    miniSearch._dirtCount = dirtCount || 0;
+    miniSearch._index = new SearchableMap();
+    return miniSearch;
+  }
+  /**
+   * @ignore
+   */
+  executeQuery(query, searchOptions = {}) {
+    if (query === MiniSearch.wildcard) {
+      return this.executeWildcardQuery(searchOptions);
+    }
+    if (typeof query !== "string") {
+      const options2 = { ...searchOptions, ...query, queries: void 0 };
+      const results2 = query.queries.map((subquery) => this.executeQuery(subquery, options2));
+      return this.combineResults(results2, options2.combineWith);
+    }
+    const { tokenize: tokenize2, processTerm, searchOptions: globalSearchOptions } = this._options;
+    const options = { tokenize: tokenize2, processTerm, ...globalSearchOptions, ...searchOptions };
+    const { tokenize: searchTokenize, processTerm: searchProcessTerm } = options;
+    const terms = searchTokenize(query).flatMap((term) => searchProcessTerm(term)).filter((term) => !!term);
+    const queries = terms.map(termToQuerySpec(options));
+    const results = queries.map((query2) => this.executeQuerySpec(query2, options));
+    return this.combineResults(results, options.combineWith);
+  }
+  /**
+   * @ignore
+   */
+  executeQuerySpec(query, searchOptions) {
+    const options = { ...this._options.searchOptions, ...searchOptions };
+    const boosts = (options.fields || this._options.fields).reduce((boosts2, field) => ({ ...boosts2, [field]: getOwnProperty(options.boost, field) || 1 }), {});
+    const { boostDocument, weights, maxFuzzy, bm25: bm25params } = options;
+    const { fuzzy: fuzzyWeight, prefix: prefixWeight } = { ...defaultSearchOptions.weights, ...weights };
+    const data = this._index.get(query.term);
+    const results = this.termResults(query.term, query.term, 1, query.termBoost, data, boosts, boostDocument, bm25params);
+    let prefixMatches;
+    let fuzzyMatches;
+    if (query.prefix) {
+      prefixMatches = this._index.atPrefix(query.term);
+    }
+    if (query.fuzzy) {
+      const fuzzy = query.fuzzy === true ? 0.2 : query.fuzzy;
+      const maxDistance = fuzzy < 1 ? Math.min(maxFuzzy, Math.round(query.term.length * fuzzy)) : fuzzy;
+      if (maxDistance)
+        fuzzyMatches = this._index.fuzzyGet(query.term, maxDistance);
+    }
+    if (prefixMatches) {
+      for (const [term, data2] of prefixMatches) {
+        const distance = term.length - query.term.length;
+        if (!distance) {
+          continue;
+        }
+        fuzzyMatches === null || fuzzyMatches === void 0 ? void 0 : fuzzyMatches.delete(term);
+        const weight = prefixWeight * term.length / (term.length + 0.3 * distance);
+        this.termResults(query.term, term, weight, query.termBoost, data2, boosts, boostDocument, bm25params, results);
+      }
+    }
+    if (fuzzyMatches) {
+      for (const term of fuzzyMatches.keys()) {
+        const [data2, distance] = fuzzyMatches.get(term);
+        if (!distance) {
+          continue;
+        }
+        const weight = fuzzyWeight * term.length / (term.length + distance);
+        this.termResults(query.term, term, weight, query.termBoost, data2, boosts, boostDocument, bm25params, results);
+      }
+    }
+    return results;
+  }
+  /**
+   * @ignore
+   */
+  executeWildcardQuery(searchOptions) {
+    const results = /* @__PURE__ */ new Map();
+    const options = { ...this._options.searchOptions, ...searchOptions };
+    for (const [shortId, id] of this._documentIds) {
+      const score = options.boostDocument ? options.boostDocument(id, "", this._storedFields.get(shortId)) : 1;
+      results.set(shortId, {
+        score,
+        terms: [],
+        match: {}
+      });
+    }
+    return results;
+  }
+  /**
+   * @ignore
+   */
+  combineResults(results, combineWith = OR) {
+    if (results.length === 0) {
+      return /* @__PURE__ */ new Map();
+    }
+    const operator = combineWith.toLowerCase();
+    const combinator = combinators[operator];
+    if (!combinator) {
+      throw new Error(`Invalid combination operator: ${combineWith}`);
+    }
+    return results.reduce(combinator) || /* @__PURE__ */ new Map();
+  }
+  /**
+   * Allows serialization of the index to JSON, to possibly store it and later
+   * deserialize it with {@link MiniSearch.loadJSON}.
+   *
+   * Normally one does not directly call this method, but rather call the
+   * standard JavaScript `JSON.stringify()` passing the {@link MiniSearch}
+   * instance, and JavaScript will internally call this method. Upon
+   * deserialization, one must pass to {@link MiniSearch.loadJSON} the same
+   * options used to create the original instance that was serialized.
+   *
+   * ### Usage:
+   *
+   * ```javascript
+   * // Serialize the index:
+   * let miniSearch = new MiniSearch({ fields: ['title', 'text'] })
+   * miniSearch.addAll(documents)
+   * const json = JSON.stringify(miniSearch)
+   *
+   * // Later, to deserialize it:
+   * miniSearch = MiniSearch.loadJSON(json, { fields: ['title', 'text'] })
+   * ```
+   *
+   * @return A plain-object serializable representation of the search index.
+   */
+  toJSON() {
+    const index2 = [];
+    for (const [term, fieldIndex] of this._index) {
+      const data = {};
+      for (const [fieldId, freqs] of fieldIndex) {
+        data[fieldId] = Object.fromEntries(freqs);
+      }
+      index2.push([term, data]);
+    }
+    return {
+      documentCount: this._documentCount,
+      nextId: this._nextId,
+      documentIds: Object.fromEntries(this._documentIds),
+      fieldIds: this._fieldIds,
+      fieldLength: Object.fromEntries(this._fieldLength),
+      averageFieldLength: this._avgFieldLength,
+      storedFields: Object.fromEntries(this._storedFields),
+      dirtCount: this._dirtCount,
+      index: index2,
+      serializationVersion: 2
+    };
+  }
+  /**
+   * @ignore
+   */
+  termResults(sourceTerm, derivedTerm, termWeight, termBoost, fieldTermData, fieldBoosts, boostDocumentFn, bm25params, results = /* @__PURE__ */ new Map()) {
+    if (fieldTermData == null)
+      return results;
+    for (const field of Object.keys(fieldBoosts)) {
+      const fieldBoost = fieldBoosts[field];
+      const fieldId = this._fieldIds[field];
+      const fieldTermFreqs = fieldTermData.get(fieldId);
+      if (fieldTermFreqs == null)
+        continue;
+      let matchingFields = fieldTermFreqs.size;
+      const avgFieldLength = this._avgFieldLength[fieldId];
+      for (const docId of fieldTermFreqs.keys()) {
+        if (!this._documentIds.has(docId)) {
+          this.removeTerm(fieldId, docId, derivedTerm);
+          matchingFields -= 1;
+          continue;
+        }
+        const docBoost = boostDocumentFn ? boostDocumentFn(this._documentIds.get(docId), derivedTerm, this._storedFields.get(docId)) : 1;
+        if (!docBoost)
+          continue;
+        const termFreq = fieldTermFreqs.get(docId);
+        const fieldLength = this._fieldLength.get(docId)[fieldId];
+        const rawScore = calcBM25Score(termFreq, matchingFields, this._documentCount, fieldLength, avgFieldLength, bm25params);
+        const weightedScore = termWeight * termBoost * fieldBoost * docBoost * rawScore;
+        const result = results.get(docId);
+        if (result) {
+          result.score += weightedScore;
+          assignUniqueTerm(result.terms, sourceTerm);
+          const match = getOwnProperty(result.match, derivedTerm);
+          if (match) {
+            match.push(field);
+          } else {
+            result.match[derivedTerm] = [field];
+          }
+        } else {
+          results.set(docId, {
+            score: weightedScore,
+            terms: [sourceTerm],
+            match: { [derivedTerm]: [field] }
+          });
+        }
+      }
+    }
+    return results;
+  }
+  /**
+   * @ignore
+   */
+  addTerm(fieldId, documentId, term) {
+    const indexData = this._index.fetch(term, createMap);
+    let fieldIndex = indexData.get(fieldId);
+    if (fieldIndex == null) {
+      fieldIndex = /* @__PURE__ */ new Map();
+      fieldIndex.set(documentId, 1);
+      indexData.set(fieldId, fieldIndex);
+    } else {
+      const docs = fieldIndex.get(documentId);
+      fieldIndex.set(documentId, (docs || 0) + 1);
+    }
+  }
+  /**
+   * @ignore
+   */
+  removeTerm(fieldId, documentId, term) {
+    if (!this._index.has(term)) {
+      this.warnDocumentChanged(documentId, fieldId, term);
+      return;
+    }
+    const indexData = this._index.fetch(term, createMap);
+    const fieldIndex = indexData.get(fieldId);
+    if (fieldIndex == null || fieldIndex.get(documentId) == null) {
+      this.warnDocumentChanged(documentId, fieldId, term);
+    } else if (fieldIndex.get(documentId) <= 1) {
+      if (fieldIndex.size <= 1) {
+        indexData.delete(fieldId);
+      } else {
+        fieldIndex.delete(documentId);
+      }
+    } else {
+      fieldIndex.set(documentId, fieldIndex.get(documentId) - 1);
+    }
+    if (this._index.get(term).size === 0) {
+      this._index.delete(term);
+    }
+  }
+  /**
+   * @ignore
+   */
+  warnDocumentChanged(shortDocumentId, fieldId, term) {
+    for (const fieldName of Object.keys(this._fieldIds)) {
+      if (this._fieldIds[fieldName] === fieldId) {
+        this._options.logger("warn", `MiniSearch: document with ID ${this._documentIds.get(shortDocumentId)} has changed before removal: term "${term}" was not present in field "${fieldName}". Removing a document after it has changed can corrupt the index!`, "version_conflict");
+        return;
+      }
+    }
+  }
+  /**
+   * @ignore
+   */
+  addDocumentId(documentId) {
+    const shortDocumentId = this._nextId;
+    this._idToShortId.set(documentId, shortDocumentId);
+    this._documentIds.set(shortDocumentId, documentId);
+    this._documentCount += 1;
+    this._nextId += 1;
+    return shortDocumentId;
+  }
+  /**
+   * @ignore
+   */
+  addFields(fields) {
+    for (let i = 0; i < fields.length; i++) {
+      this._fieldIds[fields[i]] = i;
+    }
+  }
+  /**
+   * @ignore
+   */
+  addFieldLength(documentId, fieldId, count, length) {
+    let fieldLengths = this._fieldLength.get(documentId);
+    if (fieldLengths == null)
+      this._fieldLength.set(documentId, fieldLengths = []);
+    fieldLengths[fieldId] = length;
+    const averageFieldLength = this._avgFieldLength[fieldId] || 0;
+    const totalFieldLength = averageFieldLength * count + length;
+    this._avgFieldLength[fieldId] = totalFieldLength / (count + 1);
+  }
+  /**
+   * @ignore
+   */
+  removeFieldLength(documentId, fieldId, count, length) {
+    if (count === 1) {
+      this._avgFieldLength[fieldId] = 0;
+      return;
+    }
+    const totalFieldLength = this._avgFieldLength[fieldId] * count - length;
+    this._avgFieldLength[fieldId] = totalFieldLength / (count - 1);
+  }
+  /**
+   * @ignore
+   */
+  saveStoredFields(documentId, doc) {
+    const { storeFields, extractField } = this._options;
+    if (storeFields == null || storeFields.length === 0) {
+      return;
+    }
+    let documentFields = this._storedFields.get(documentId);
+    if (documentFields == null)
+      this._storedFields.set(documentId, documentFields = {});
+    for (const fieldName of storeFields) {
+      const fieldValue2 = extractField(doc, fieldName);
+      if (fieldValue2 !== void 0)
+        documentFields[fieldName] = fieldValue2;
+    }
+  }
+};
+MiniSearch.wildcard = Symbol("*");
+var getOwnProperty = (object, property) => Object.prototype.hasOwnProperty.call(object, property) ? object[property] : void 0;
+var combinators = {
+  [OR]: (a, b) => {
+    for (const docId of b.keys()) {
+      const existing = a.get(docId);
+      if (existing == null) {
+        a.set(docId, b.get(docId));
+      } else {
+        const { score, terms, match } = b.get(docId);
+        existing.score = existing.score + score;
+        existing.match = Object.assign(existing.match, match);
+        assignUniqueTerms(existing.terms, terms);
+      }
+    }
+    return a;
+  },
+  [AND]: (a, b) => {
+    const combined = /* @__PURE__ */ new Map();
+    for (const docId of b.keys()) {
+      const existing = a.get(docId);
+      if (existing == null)
+        continue;
+      const { score, terms, match } = b.get(docId);
+      assignUniqueTerms(existing.terms, terms);
+      combined.set(docId, {
+        score: existing.score + score,
+        terms: existing.terms,
+        match: Object.assign(existing.match, match)
+      });
+    }
+    return combined;
+  },
+  [AND_NOT]: (a, b) => {
+    for (const docId of b.keys())
+      a.delete(docId);
+    return a;
+  }
+};
+var defaultBM25params = { k: 1.2, b: 0.7, d: 0.5 };
+var calcBM25Score = (termFreq, matchingCount, totalCount, fieldLength, avgFieldLength, bm25params) => {
+  const { k, b, d } = bm25params;
+  const invDocFreq = Math.log(1 + (totalCount - matchingCount + 0.5) / (matchingCount + 0.5));
+  return invDocFreq * (d + termFreq * (k + 1) / (termFreq + k * (1 - b + b * fieldLength / avgFieldLength)));
+};
+var termToQuerySpec = (options) => (term, i, terms) => {
+  const fuzzy = typeof options.fuzzy === "function" ? options.fuzzy(term, i, terms) : options.fuzzy || false;
+  const prefix = typeof options.prefix === "function" ? options.prefix(term, i, terms) : options.prefix === true;
+  const termBoost = typeof options.boostTerm === "function" ? options.boostTerm(term, i, terms) : 1;
+  return { term, fuzzy, prefix, termBoost };
+};
+var defaultOptions = {
+  idField: "id",
+  extractField: (document4, fieldName) => document4[fieldName],
+  stringifyField: (fieldValue2, fieldName) => fieldValue2.toString(),
+  tokenize: (text3) => text3.split(SPACE_OR_PUNCTUATION),
+  processTerm: (term) => term.toLowerCase(),
+  fields: void 0,
+  searchOptions: void 0,
+  storeFields: [],
+  logger: (level, message) => {
+    if (typeof (console === null || console === void 0 ? void 0 : console[level]) === "function")
+      console[level](message);
+  },
+  autoVacuum: true
+};
+var defaultSearchOptions = {
+  combineWith: OR,
+  prefix: false,
+  fuzzy: false,
+  maxFuzzy: 6,
+  boost: {},
+  weights: { fuzzy: 0.45, prefix: 0.375 },
+  bm25: defaultBM25params
+};
+var defaultAutoSuggestOptions = {
+  combineWith: AND,
+  prefix: (term, i, terms) => i === terms.length - 1
+};
+var defaultVacuumOptions = { batchSize: 1e3, batchWait: 10 };
+var defaultVacuumConditions = { minDirtFactor: 0.1, minDirtCount: 20 };
+var defaultAutoVacuumOptions = { ...defaultVacuumOptions, ...defaultVacuumConditions };
+var assignUniqueTerm = (target, term) => {
+  if (!target.includes(term))
+    target.push(term);
+};
+var assignUniqueTerms = (target, source) => {
+  for (const term of source) {
+    if (!target.includes(term))
+      target.push(term);
+  }
+};
+var byScore = ({ score: a }, { score: b }) => b - a;
+var createMap = () => /* @__PURE__ */ new Map();
+var objectToNumericMap = (object) => {
+  const map = /* @__PURE__ */ new Map();
+  for (const key of Object.keys(object)) {
+    map.set(parseInt(key, 10), object[key]);
+  }
+  return map;
+};
+var objectToNumericMapAsync = async (object) => {
+  const map = /* @__PURE__ */ new Map();
+  let count = 0;
+  for (const key of Object.keys(object)) {
+    map.set(parseInt(key, 10), object[key]);
+    if (++count % 1e3 === 0) {
+      await wait(0);
+    }
+  }
+  return map;
+};
+var wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+var SPACE_OR_PUNCTUATION = /[\n\r\p{Z}\p{P}]+/u;
+
+// node_modules/@idan_ariav/qmd/dist/query/lexer.js
+var KEYWORDS = {
+  AND: "AND",
+  OR: "OR",
+  NOT: "NOT"
+};
+function tokenize(input) {
+  const tokens = [];
+  let i = 0;
+  function peek() {
+    var _a;
+    return (_a = input[i]) != null ? _a : "";
+  }
+  function consume() {
+    var _a;
+    return (_a = input[i++]) != null ? _a : "";
+  }
+  function skipWS() {
+    while (i < input.length && /\s/.test(input[i]))
+      i++;
+  }
+  while (i < input.length) {
+    skipWS();
+    if (i >= input.length)
+      break;
+    const pos = i;
+    const ch = peek();
+    if (ch === "(") {
+      consume();
+      tokens.push({ type: "LPAREN", value: "(", pos });
+      continue;
+    }
+    if (ch === ")") {
+      consume();
+      tokens.push({ type: "RPAREN", value: ")", pos });
+      continue;
+    }
+    if (ch === "<") {
+      consume();
+      tokens.push({ type: "LT", value: "<", pos });
+      continue;
+    }
+    if (ch === ">") {
+      consume();
+      tokens.push({ type: "GT", value: ">", pos });
+      continue;
+    }
+    if (ch === "~") {
+      consume();
+      if (peek() === "/") {
+        consume();
+        let pat = "";
+        while (i < input.length && peek() !== "/")
+          pat += consume();
+        if (peek() === "/")
+          consume();
+        tokens.push({ type: "REGEX", value: pat, pos });
+      } else if (peek() === "=") {
+        consume();
+        tokens.push({ type: "FUZZY", value: "~=", pos });
+      } else {
+        tokens.push({ type: "FUZZY", value: "~=", pos });
+      }
+      continue;
+    }
+    if (ch === "=") {
+      consume();
+      tokens.push({ type: "EQ", value: "=", pos });
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      const quote = consume();
+      let str2 = "";
+      while (i < input.length && peek() !== quote) {
+        if (peek() === "\\") {
+          consume();
+          str2 += consume();
+        } else
+          str2 += consume();
+      }
+      if (peek() === quote)
+        consume();
+      tokens.push({ type: "STRING", value: str2, pos });
+      continue;
+    }
+    if (input.startsWith("missing:", i)) {
+      i += 8;
+      tokens.push({ type: "MISSING", value: "missing:", pos });
+      continue;
+    }
+    if (input.startsWith("empty:", i)) {
+      i += 6;
+      tokens.push({ type: "EMPTY", value: "empty:", pos });
+      continue;
+    }
+    if (input.startsWith("no:", i)) {
+      i += 3;
+      tokens.push({ type: "NO", value: "no:", pos });
+      continue;
+    }
+    if (/[\w.\-/]/.test(ch)) {
+      let word = "";
+      while (i < input.length && /[^\s=~<>()"']/.test(peek()) && !input.startsWith("missing:", i) && !input.startsWith("empty:", i) && !input.startsWith("no:", i)) {
+        word += consume();
+      }
+      const upper = word.toUpperCase();
+      if (upper in KEYWORDS) {
+        tokens.push({ type: KEYWORDS[upper], value: word, pos });
+      } else if (/^\d+[dwmy]$/i.test(word)) {
+        tokens.push({ type: "DURATION", value: word, pos });
+      } else {
+        tokens.push({ type: "IDENT", value: word, pos });
+      }
+      continue;
+    }
+    consume();
+  }
+  tokens.push({ type: "EOF", value: "", pos: i });
+  return tokens;
+}
+
+// node_modules/@idan_ariav/qmd/dist/query/parser.js
+var Parser = class {
+  constructor(input) {
+    __publicField(this, "tokens");
+    __publicField(this, "pos", 0);
+    this.tokens = tokenize(input);
+  }
+  peek() {
+    var _a;
+    return (_a = this.tokens[this.pos]) != null ? _a : { type: "EOF", value: "", pos: 0 };
+  }
+  consume(expected) {
+    var _a;
+    const t = (_a = this.tokens[this.pos]) != null ? _a : { type: "EOF", value: "", pos: 0 };
+    if (expected && t.type !== expected) {
+      throw new Error(`Expected ${expected} but got ${t.type} ("${t.value}") at position ${t.pos}`);
+    }
+    this.pos++;
+    return t;
+  }
+  parse() {
+    const node2 = this.parseOr();
+    if (this.peek().type !== "EOF") {
+      throw new Error(`Unexpected token "${this.peek().value}" at position ${this.peek().pos}`);
+    }
+    return node2;
+  }
+  parseOr() {
+    let left = this.parseAnd();
+    while (this.peek().type === "OR") {
+      this.consume("OR");
+      const right = this.parseAnd();
+      left = { type: "OR", left, right };
+    }
+    return left;
+  }
+  parseAnd() {
+    let left = this.parseNot();
+    while (this.peek().type === "AND") {
+      this.consume("AND");
+      const right = this.parseNot();
+      left = { type: "AND", left, right };
+    }
+    return left;
+  }
+  parseNot() {
+    if (this.peek().type === "NOT") {
+      this.consume("NOT");
+      return { type: "NOT", operand: this.parseNot() };
+    }
+    return this.parsePrimary();
+  }
+  parsePrimary() {
+    const t = this.peek();
+    if (t.type === "LPAREN") {
+      this.consume("LPAREN");
+      const node2 = this.parseOr();
+      this.consume("RPAREN");
+      return node2;
+    }
+    if (t.type === "MISSING") {
+      this.consume("MISSING");
+      const field = this.consume("IDENT").value;
+      return { type: "MISSING", field };
+    }
+    if (t.type === "EMPTY") {
+      this.consume("EMPTY");
+      const field = this.consume("IDENT").value;
+      return { type: "EMPTY", field };
+    }
+    if (t.type === "NO") {
+      this.consume("NO");
+      const field = this.consume("IDENT").value;
+      let value = null;
+      if (this.peek().type === "EQ") {
+        this.consume("EQ");
+        value = this.consumeValue();
+      }
+      return { type: "NO", field, value };
+    }
+    if (t.type === "IDENT") {
+      const field = this.consume("IDENT").value;
+      const op = this.peek();
+      if (op.type === "EQ") {
+        this.consume("EQ");
+        return { type: "CMP", field, op: "=", value: this.consumeValue() };
+      }
+      if (op.type === "FUZZY") {
+        this.consume("FUZZY");
+        return { type: "CMP", field, op: "~=", value: this.consumeValue() };
+      }
+      if (op.type === "REGEX") {
+        const val = this.consume("REGEX").value;
+        return { type: "CMP", field, op: "regex", value: val };
+      }
+      if (op.type === "LT") {
+        this.consume("LT");
+        return { type: "CMP", field, op: "<", value: this.consumeValue() };
+      }
+      if (op.type === "GT") {
+        this.consume("GT");
+        return { type: "CMP", field, op: ">", value: this.consumeValue() };
+      }
+      return { type: "CMP", field: "tag", op: "=", value: field };
+    }
+    throw new Error(`Unexpected token "${t.value}" (${t.type}) at position ${t.pos}`);
+  }
+  consumeValue() {
+    const t = this.peek();
+    if (t.type === "STRING" || t.type === "IDENT" || t.type === "DURATION") {
+      return this.consume().value;
+    }
+    throw new Error(`Expected a value but got ${t.type} at position ${t.pos}`);
+  }
+};
+function parseFilter(expr) {
+  return new Parser(expr.trim()).parse();
+}
+
+// src/lite/vectorSet.ts
+var WORD_RE = /[a-z]{3,20}/g;
+var VectorSet = class {
+  constructor(manifest, bin, itemCount) {
+    this.manifest = manifest;
+    this.bin = bin;
+    this.itemCount = itemCount;
+    this.wordRow = new Map(manifest.words.map((w, i) => [w, itemCount + i]));
+  }
+  /** Loads `<dir>/manifest.json` and its vectors — v2's chunk `files` (each under Obsidian Sync's
+   *  5 MB limit), or v1's single `vectors.bin` — or null when the export is absent. */
+  static async load(app, dir, itemCount) {
+    var _a;
+    const adapter = app.vault.adapter;
+    const manifestPath = `${dir}/manifest.json`;
+    if (!await adapter.exists(manifestPath))
+      return null;
+    const manifest = JSON.parse(await adapter.read(manifestPath));
+    if (manifest.format !== "pkm-vectors" || manifest.version !== 1 && manifest.version !== 2) {
+      throw new Error(`${manifestPath}: unsupported export format ${manifest.format} v${manifest.version}`);
+    }
+    const paths = ((_a = manifest.files) != null ? _a : ["vectors.bin"]).map((f) => `${dir}/${f}`);
+    for (const p of paths) {
+      if (!await adapter.exists(p))
+        throw new Error(`${p} is missing (not synced yet?)`);
+    }
+    const parts = await Promise.all(paths.map((p) => adapter.readBinary(p)));
+    const bin = new Int8Array(parts.reduce((n, b) => n + b.byteLength, 0));
+    let off = 0;
+    for (const b of parts) {
+      bin.set(new Int8Array(b), off);
+      off += b.byteLength;
+    }
+    return new VectorSet(manifest, bin, itemCount(manifest));
+  }
+  /** Mean of the query's known word vectors, normalized; null when no word is known. */
+  embedQuery(text3) {
+    var _a;
+    const { dim } = this.manifest;
+    const v = new Float32Array(dim);
+    let known = 0;
+    for (const word of (_a = text3.toLowerCase().match(WORD_RE)) != null ? _a : []) {
+      const row = this.wordRow.get(word);
+      if (row === void 0)
+        continue;
+      const off = row * dim;
+      for (let k = 0; k < dim; k++)
+        v[k] += this.bin[off + k];
+      known++;
+    }
+    return known > 0 ? normalize2(v) : null;
+  }
+  /** Item row as a normalized float vector (e.g. to use an existing item as the query). */
+  itemVector(i) {
+    const { dim } = this.manifest;
+    return normalize2(Float32Array.from(this.bin.subarray(i * dim, (i + 1) * dim)));
+  }
+  /** Cosine similarity of a normalized query vector with item `i`. */
+  score(query, i) {
+    const { dim, scale } = this.manifest;
+    const off = i * dim;
+    let s = 0;
+    for (let k = 0; k < dim; k++)
+      s += query[k] * this.bin[off + k];
+    return s / scale;
+  }
+  /** Cosine similarity of items `i` and `j`, as qvoid's clustering computes it. */
+  similarity(i, j) {
+    const { dim, scale } = this.manifest;
+    let s = 0;
+    for (let k = 0; k < dim; k++)
+      s += this.bin[i * dim + k] * this.bin[j * dim + k];
+    return s / (scale * scale);
+  }
+};
+function normalize2(v) {
+  let norm = 0;
+  for (let k = 0; k < v.length; k++)
+    norm += v[k] * v[k];
+  norm = Math.sqrt(norm) || 1;
+  for (let k = 0; k < v.length; k++)
+    v[k] /= norm;
+  return v;
+}
+
+// src/lite/fsearch.ts
+var DATE_FIELDS = ["created", "date", "created_at", "dateCreated"];
+var MODIFIED_FIELDS = ["modified", "updated", "modified_at", "dateModified", "lastModified"];
+var TAG_FIELDS = ["tags", "tag"];
+function toISODate(val) {
+  if (!val)
+    return null;
+  if (val instanceof Date)
+    return isNaN(val.getTime()) ? null : val.toISOString().slice(0, 10);
+  if (typeof val === "string") {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  }
+  return null;
+}
+function scalarText(val) {
+  if (val === null || val === void 0)
+    return "";
+  if (val instanceof Date)
+    return val.toISOString().slice(0, 10);
+  return String(val);
+}
+function frontmatterRows(fm) {
+  const rows = [];
+  for (const [key, val] of Object.entries(fm)) {
+    if (key === "position")
+      continue;
+    for (const item of Array.isArray(val) ? val : [val]) {
+      rows.push({ key, text: scalarText(item), num: typeof item === "number" ? item : null, date: toISODate(item) });
+    }
+  }
+  return rows;
+}
+function frontmatterTags(fm) {
+  for (const field of TAG_FIELDS) {
+    const raw = fm[field];
+    if (raw === void 0)
+      continue;
+    if (Array.isArray(raw))
+      return raw.map((v) => String(v).trim()).filter(Boolean);
+    if (typeof raw === "string")
+      return raw.split(",").map((v) => v.trim()).filter(Boolean);
+    return [];
+  }
+  return [];
+}
+function frontmatterDate(fm, kind) {
+  for (const field of kind === "created" ? DATE_FIELDS : MODIFIED_FIELDS) {
+    const d = toISODate(fm[field]);
+    if (d)
+      return d;
+  }
+  return null;
+}
+function resolveDate(value) {
+  const m = /^(\d+)([dwmy])$/i.exec(value);
+  if (!m)
+    return value;
+  const n = parseInt(m[1], 10);
+  const now = /* @__PURE__ */ new Date();
+  switch (m[2].toLowerCase()) {
+    case "d":
+      now.setDate(now.getDate() - n);
+      break;
+    case "w":
+      now.setDate(now.getDate() - n * 7);
+      break;
+    case "m":
+      now.setMonth(now.getMonth() - n);
+      break;
+    case "y":
+      now.setFullYear(now.getFullYear() - n);
+      break;
+  }
+  return now.toISOString().slice(0, 10);
+}
+var like = (text3, v) => text3.toLowerCase().includes(v.toLowerCase());
+function regex(text3, pattern) {
+  try {
+    return new RegExp(pattern).test(text3);
+  } catch (e) {
+    return false;
+  }
+}
+function matchText(text3, op, value, field) {
+  switch (op) {
+    case "=":
+      return text3 === value;
+    case "~=":
+      return like(text3, value);
+    case "regex":
+      return regex(text3, value);
+    default:
+      throw new Error(`Operator ${op} not supported for ${field} field`);
+  }
+}
+var DOC_FIELDS = {
+  created: (f) => f.created,
+  created_at: (f) => f.created,
+  modified: (f) => f.modified,
+  modified_at: (f) => f.modified,
+  title: (f) => f.title,
+  word_count: (f) => f.wordCount,
+  path: (f) => f.path,
+  collection: (f) => f.collection
+};
+var DATE_DOC_FIELDS = /* @__PURE__ */ new Set(["created", "created_at", "modified", "modified_at"]);
+function evalCmp(field, op, value, f) {
+  if (field === "tag" || field === "tags")
+    return f.tags.some((t) => matchText(t, op, value, "tag"));
+  if (field === "section")
+    return f.sections.some((s) => s.heading !== null && matchText(s.heading, op, value, "section"));
+  if (field === "content") {
+    if (op !== "~=" && op !== "regex")
+      throw new Error(`Operator ${op} not supported for content field`);
+    return f.sections.some((s) => matchText(s.body, op, value, "content"));
+  }
+  if (field === "level") {
+    const lvl = parseInt(value, 10);
+    if (op === "=")
+      return f.sections.some((s) => s.level === lvl);
+    if (op === "<")
+      return f.sections.some((s) => s.level < lvl);
+    if (op === ">")
+      return f.sections.some((s) => s.level > lvl);
+    throw new Error(`Operator ${op} not supported for level field`);
+  }
+  if (field in DOC_FIELDS) {
+    const actual = DOC_FIELDS[field](f);
+    const v = DATE_DOC_FIELDS.has(field) ? resolveDate(value) : value;
+    if (typeof actual === "number") {
+      const n = parseFloat(v);
+      if (op === "<")
+        return actual < n;
+      if (op === ">")
+        return actual > n;
+      if (op === "=")
+        return actual === n;
+    }
+    if (op === "<")
+      return String(actual) < v;
+    if (op === ">")
+      return String(actual) > v;
+    return matchText(String(actual), op, v, field);
+  }
+  const rows = f.rows.filter((r) => r.key === field);
+  if (op === "<" || op === ">") {
+    const n = parseFloat(value);
+    const d = resolveDate(value);
+    return rows.some(
+      (r) => op === "<" ? r.num !== null && r.num < n || r.date !== null && r.date < d : r.num !== null && r.num > n || r.date !== null && r.date > d
+    );
+  }
+  return rows.some((r) => matchText(r.text, op, value, field));
+}
+var missing = (field, f) => !f.rows.some((r) => r.key === field);
+function evaluateFilter(node2, f) {
+  switch (node2.type) {
+    case "AND":
+      return evaluateFilter(node2.left, f) && evaluateFilter(node2.right, f);
+    case "OR":
+      return evaluateFilter(node2.left, f) || evaluateFilter(node2.right, f);
+    case "NOT":
+      return !evaluateFilter(node2.operand, f);
+    case "CMP":
+      return evalCmp(node2.field, node2.op, node2.value, f);
+    case "MISSING":
+      return missing(node2.field, f);
+    case "EMPTY":
+      if (node2.field === "section" || node2.field === "sections")
+        return f.sections.some((s) => !s.body);
+      return f.rows.some((r) => r.key === node2.field && r.text === "");
+    case "NO":
+      if (node2.field === "headings" || node2.field === "heading")
+        return !f.sections.some((s) => s.level > 0);
+      if (node2.field === "level") {
+        const lvl = node2.value ? parseInt(node2.value, 10) : null;
+        return lvl !== null ? !f.sections.some((s) => s.level === lvl) : !f.sections.some((s) => s.level > 0);
+      }
+      return missing(node2.field, f);
+  }
+}
+
+// src/lite/qmdLite.ts
+var RRF_K = 60;
+var HYBRID_CANDIDATES = 50;
+var SNIPPET_CHARS = 300;
+var sha16 = async (text3) => {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text3));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+};
+var fieldValue = (fm, name) => {
+  const key = Object.keys(fm).find((k) => k.toLowerCase() === name);
+  return key ? fm[key] : void 0;
+};
+var asText = (v) => Array.isArray(v) ? v.join(", ") : v === void 0 || v === null ? "" : String(v);
+var QmdLite = class {
+  constructor(app, vectors) {
+    this.app = app;
+    this.vectors = vectors;
+    this.texts = /* @__PURE__ */ new Map();
+    this.keyword = null;
+  }
+  static async load(app, dir) {
+    const vectors = await VectorSet.load(app, dir, (m) => m.items.length);
+    return vectors ? new QmdLite(app, vectors) : null;
+  }
+  get exportedAt() {
+    return this.vectors.manifest.exportedAt;
+  }
+  get docs() {
+    return this.vectors.manifest.docs;
+  }
+  /** `qmd collection list` text, as parsed by parseCollectionNames. */
+  collectionList() {
+    return Object.keys(this.vectors.manifest.collections).map((name) => `${name} (qmd://${name}/)`).join("\n");
+  }
+  inCollections(doc, collections) {
+    return collections.length === 0 || collections.includes(doc.collection);
+  }
+  file(doc) {
+    const f = this.app.vault.getAbstractFileByPath(doc.path);
+    return f instanceof import_obsidian11.TFile ? f : null;
+  }
+  /** Loads (or refreshes, when the file changed) the indexed text of doc `d`. */
+  async docText(d) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    const doc = this.docs[d];
+    const file = this.file(doc);
+    if (!file)
+      return null;
+    const cached = this.texts.get(d);
+    if (cached && cached.mtime === file.stat.mtime)
+      return cached;
+    const raw = await this.app.vault.cachedRead(file);
+    const cache = this.app.metadataCache.getFileCache(file);
+    const fm = (_a = cache == null ? void 0 : cache.frontmatter) != null ? _a : {};
+    const headings = (_b = cache == null ? void 0 : cache.headings) != null ? _b : [];
+    const [start, end] = indexedRange(
+      raw.length,
+      headings,
+      (_d = (_c = cache == null ? void 0 : cache.frontmatterPosition) == null ? void 0 : _c.end.offset) != null ? _d : 0,
+      (_e = this.vectors.manifest.collections[doc.collection]) == null ? void 0 : _e.section
+    );
+    const indexed = raw.slice(start, end).trim();
+    const sections = splitByHeadings(raw, headings, start, end);
+    const text3 = {
+      mtime: file.stat.mtime,
+      indexed,
+      aliases: asText((_f = fieldValue(fm, "aliases")) != null ? _f : fieldValue(fm, "alias")),
+      description: asText((_g = fieldValue(fm, "description")) != null ? _g : fieldValue(fm, "summary")),
+      facts: {
+        title: doc.title,
+        path: doc.file.replace(/^qmd:\/\/[^/]+\//, ""),
+        collection: doc.collection,
+        created: (_h = frontmatterDate(fm, "created")) != null ? _h : new Date(file.stat.ctime).toISOString(),
+        modified: (_i = frontmatterDate(fm, "modified")) != null ? _i : new Date(file.stat.mtime).toISOString(),
+        wordCount: sections.reduce((n, s) => {
+          var _a2, _b2;
+          return n + ((_b2 = (_a2 = s.body.match(/\S+/g)) == null ? void 0 : _a2.length) != null ? _b2 : 0);
+        }, 0),
+        tags: frontmatterTags(fm),
+        rows: frontmatterRows(fm),
+        sections
+      }
+    };
+    this.texts.set(d, text3);
+    return text3;
+  }
+  /** Refreshes every doc's text and keeps the keyword index in step with it. */
+  async syncTexts() {
+    if (!this.keyword) {
+      this.keyword = new MiniSearch({
+        fields: ["title", "aliases", "description", "body"],
+        searchOptions: { boost: { title: 3, aliases: 2, description: 1.5 }, prefix: true }
+      });
+    }
+    for (let d = 0; d < this.docs.length; d++) {
+      const before = this.texts.get(d);
+      const text3 = await this.docText(d);
+      if (text3 === before)
+        continue;
+      if (before)
+        this.keyword.discard(d);
+      if (text3) {
+        this.keyword.add({ id: d, title: this.docs[d].title, aliases: text3.aliases, description: text3.description, body: text3.indexed });
+      } else {
+        this.texts.delete(d);
+      }
+    }
+  }
+  hit(d, score, line, snippet) {
+    var _a;
+    const doc = this.docs[d];
+    return {
+      docid: `#${doc.docid}`,
+      score: Math.round(score * 100) / 100,
+      file: doc.path,
+      path: (_a = doc.path.split("/").pop()) != null ? _a : doc.path,
+      collection: doc.collection,
+      ...line !== void 0 && { line },
+      title: doc.title,
+      ...doc.context && { context: doc.context },
+      ...snippet && { snippet }
+    };
+  }
+  /** Marks hits whose file changed since the export (vector positions/snippets may be off). */
+  async markStale(hits) {
+    var _a;
+    const byPath = new Map(this.docs.map((doc) => [doc.path, doc]));
+    for (const hit of hits) {
+      const doc = byPath.get(hit.file);
+      const file = doc && this.file(doc);
+      if (!doc || !file)
+        continue;
+      if (await sha16(await this.app.vault.cachedRead(file)) !== doc.hash) {
+        hit.stale = true;
+        hit.snippet = `(changed since export) ${(_a = hit.snippet) != null ? _a : ""}`.trim();
+      }
+    }
+    return hits;
+  }
+  vectorRank(query, opts) {
+    const q = this.vectors.embedQuery(query);
+    if (!q)
+      return null;
+    const best = /* @__PURE__ */ new Map();
+    const { items } = this.vectors.manifest;
+    for (let i = 0; i < items.length; i++) {
+      const d = items[i].d;
+      if (!this.inCollections(this.docs[d], opts.collections))
+        continue;
+      const score = this.vectors.score(q, i);
+      const prev = best.get(d);
+      if (!prev || score > prev.score)
+        best.set(d, { score, item: i });
+    }
+    return [...best].map(([d, v]) => ({ d, ...v })).filter((r) => r.score >= opts.minScore).sort((a, b) => b.score - a.score);
+  }
+  async vsearch(query, opts) {
+    const ranked = this.vectorRank(query, opts);
+    if (!ranked)
+      throw new Error("None of the query's words are in the export's word table (lite mode).");
+    const { items } = this.vectors.manifest;
+    return this.markStale(
+      ranked.slice(0, opts.limit).map((r) => this.hit(r.d, r.score, items[r.item].line, items[r.item].snippet))
+    );
+  }
+  async keywordRank(query, opts) {
+    var _a, _b, _c;
+    await this.syncTexts();
+    const phrases = ((_a = query.match(/"[^"]+"/g)) != null ? _a : []).map((p) => p.slice(1, -1).toLowerCase());
+    const rest = query.replace(/"[^"]+"/g, " ");
+    const excluded = rest.split(/\s+/).filter((t) => t.startsWith("-") && t.length > 1).map((t) => t.slice(1).toLowerCase());
+    const terms = [...rest.split(/\s+/).filter((t) => t && !t.startsWith("-")), ...phrases].join(" ");
+    if (!terms.trim())
+      return [];
+    const results = this.keyword.search(terms, {
+      filter: (r) => {
+        const d = r.id;
+        const text3 = this.texts.get(d).indexed.toLowerCase();
+        return this.inCollections(this.docs[d], opts.collections) && phrases.every((p) => text3.includes(p)) && !excluded.some((t) => text3.includes(t));
+      }
+    });
+    const top = (_c = (_b = results[0]) == null ? void 0 : _b.score) != null ? _c : 1;
+    return results.map((r) => {
+      const d = r.id;
+      const { line, snippet } = keywordSnippet(this.texts.get(d).indexed, r.terms);
+      return { d, score: r.score / top, line, snippet };
+    });
+  }
+  async tsearch(query, opts) {
+    const ranked = await this.keywordRank(query, opts);
+    return ranked.filter((r) => r.score >= opts.minScore).slice(0, opts.limit).map((r) => this.hit(r.d, r.score, r.line, r.snippet));
+  }
+  /** Reciprocal-rank fusion of keyword + vector rankings (no query expansion or LLM rerank). */
+  async hsearch(query, opts) {
+    var _a, _b, _c;
+    const wide = { ...opts, minScore: 0 };
+    const keyword = (await this.keywordRank(query, wide)).slice(0, HYBRID_CANDIDATES);
+    const vector = ((_a = this.vectorRank(query, wide)) != null ? _a : []).slice(0, HYBRID_CANDIDATES);
+    const fused = /* @__PURE__ */ new Map();
+    const { items } = this.vectors.manifest;
+    vector.forEach((r, rank) => {
+      fused.set(r.d, { rrf: 1 / (RRF_K + rank + 1), line: items[r.item].line, snippet: items[r.item].snippet });
+    });
+    keyword.forEach((r, rank) => {
+      var _a2;
+      const prev = fused.get(r.d);
+      fused.set(r.d, { rrf: ((_a2 = prev == null ? void 0 : prev.rrf) != null ? _a2 : 0) + 1 / (RRF_K + rank + 1), line: r.line, snippet: r.snippet });
+    });
+    const ranked = [...fused].sort((a, b) => b[1].rrf - a[1].rrf);
+    const top = (_c = (_b = ranked[0]) == null ? void 0 : _b[1].rrf) != null ? _c : 1;
+    return this.markStale(
+      ranked.map(([d, r]) => this.hit(d, r.rrf / top, r.line, r.snippet)).filter((h) => h.score >= opts.minScore).slice(0, opts.limit)
+    );
+  }
+  async fsearch(filter, opts) {
+    const node2 = parseFilter(filter);
+    await this.syncTexts();
+    const matches = [];
+    for (const [d, text3] of this.texts) {
+      if (this.inCollections(this.docs[d], opts.collections) && evaluateFilter(node2, text3.facts)) {
+        matches.push({ d, facts: text3.facts });
+      }
+    }
+    matches.sort((a, b) => a.facts.modified < b.facts.modified ? 1 : a.facts.modified > b.facts.modified ? -1 : 0);
+    return matches.slice(0, opts.limit).map(({ d, facts }) => ({
+      file: this.docs[d].path,
+      path: this.docs[d].path.split("/").pop(),
+      collection: facts.collection,
+      title: facts.title,
+      modified: facts.modified.slice(0, 10),
+      word_count: facts.wordCount
+    }));
+  }
+  /** `qmd get`: by #docid, qmd:// URI, vault path, or note name. */
+  async get(target, opts) {
+    var _a, _b, _c, _d, _e;
+    const doc = target.startsWith("#") ? this.docs.find((x) => `#${x.docid}` === target) : this.docs.find((x) => x.file === target || x.path === target);
+    const ref = target.replace(/^qmd:\/\/[^/]+\//, "");
+    const file = (_b = (_a = doc && this.file(doc)) != null ? _a : this.app.metadataCache.getFirstLinkpathDest(ref.replace(/\.md$/, ""), "")) != null ? _b : resolveVaultFile(this.app, ref);
+    if (!file)
+      throw new Error(`Document not found: ${target}`);
+    const raw = await this.app.vault.cachedRead(file);
+    const cache = this.app.metadataCache.getFileCache(file);
+    let start = 0;
+    let end = raw.length;
+    if (opts.section) {
+      const range = sectionRange((_c = cache == null ? void 0 : cache.headings) != null ? _c : [], opts.section.split("/"), raw.length);
+      if (!range)
+        throw new Error(`Section not found: ${opts.section}`);
+      [start, end] = range;
+    }
+    const dropTypes = /* @__PURE__ */ new Set([...opts.noCallouts ? ["callout"] : [], ...opts.noCodeblocks ? ["code"] : []]);
+    let text3 = raw.slice(start, end);
+    const drops = ((_d = cache == null ? void 0 : cache.sections) != null ? _d : []).filter((s) => dropTypes.has(s.type) && s.position.start.offset >= start && s.position.end.offset <= end).sort((a, b) => b.position.start.offset - a.position.start.offset);
+    for (const s of drops) {
+      text3 = text3.slice(0, s.position.start.offset - start) + text3.slice(s.position.end.offset - start);
+    }
+    let lines = text3.split("\n");
+    const first = Math.max(1, (_e = opts.from) != null ? _e : 1);
+    lines = lines.slice(first - 1, opts.lines !== void 0 ? first - 1 + opts.lines : void 0);
+    if (opts.lineNumbers)
+      lines = lines.map((l, i) => `${first + i}: ${l}`);
+    return lines.join("\n");
+  }
+};
+function indexedRange(length, headings, frontmatterEnd, section) {
+  if (!section)
+    return [frontmatterEnd, length];
+  const i = headings.findIndex((h) => h.level === section.level && h.heading.trim() === section.heading);
+  if (i < 0)
+    return [0, 0];
+  const next = headings.slice(i + 1).find((h) => h.level <= section.level);
+  return [headings[i].position.end.offset, next ? next.position.start.offset : length];
+}
+function splitByHeadings(raw, headings, start, end) {
+  const sections = [];
+  let current = { level: 0, heading: null, from: start };
+  for (const h of headings) {
+    if (h.position.start.offset < start || h.position.start.offset >= end)
+      continue;
+    sections.push({ level: current.level, heading: current.heading, body: raw.slice(current.from, h.position.start.offset).trim() });
+    current = { level: h.level, heading: h.heading.trim(), from: h.position.end.offset };
+  }
+  sections.push({ level: current.level, heading: current.heading, body: raw.slice(current.from, end).trim() });
+  return sections.filter((s) => s.level > 0 || s.body);
+}
+function sectionRange(headings, path, textLength) {
+  let lo = 0;
+  let hi = textLength;
+  let minLevel = 0;
+  for (const part of path) {
+    const h = headings.find(
+      (x) => x.position.start.offset >= lo && x.position.start.offset < hi && x.level > minLevel && x.heading.trim() === part.trim()
+    );
+    if (!h)
+      return null;
+    const next = headings.find((x) => x.position.start.offset > h.position.start.offset && x.level <= h.level);
+    lo = h.position.start.offset;
+    hi = Math.min(hi, next ? next.position.start.offset : textLength);
+    minLevel = h.level;
+  }
+  return [lo, hi];
+}
+function keywordSnippet(text3, terms) {
+  const lines = text3.split("\n");
+  const lowered = terms.map((t) => t.toLowerCase());
+  const idx = lines.findIndex((l) => lowered.some((t) => l.toLowerCase().includes(t)));
+  if (idx < 0)
+    return { snippet: text3.slice(0, SNIPPET_CHARS) || void 0 };
+  return { line: idx + 1, snippet: lines.slice(idx, idx + 4).join("\n").slice(0, SNIPPET_CHARS) };
+}
+
+// node_modules/@idan_ariav/qvoid/dist/query.js
+function matchOrigin(link, origin) {
+  return link.occurrences.some((o) => o.source.startsWith(origin));
+}
+function matchSemantic(link, semantic) {
+  return link.occurrences.some((o) => o.semantic_type === semantic);
+}
+function matchSearch(link, q) {
+  const ql = q.toLowerCase();
+  if (link.normalized.includes(ql))
+    return true;
+  return link.occurrences.some((o) => o.alias !== void 0 && o.alias.toLowerCase().includes(ql) || o.context_before.toLowerCase().includes(ql) || o.context_after.toLowerCase().includes(ql));
+}
+function filterLinks(links, opts) {
+  let results = links.filter((link) => {
+    if (opts.origin && !matchOrigin(link, opts.origin))
+      return false;
+    if (opts.destination) {
+      const dests = Array.isArray(opts.destination) ? opts.destination : [opts.destination];
+      if (!dests.includes(link.expected_destination))
+        return false;
+    }
+    if (opts.semanticType && !matchSemantic(link, opts.semanticType))
+      return false;
+    if (opts.minOccurrences !== void 0 && link.stats.total_occurrences < opts.minOccurrences)
+      return false;
+    if (opts.search && !matchSearch(link, opts.search))
+      return false;
+    return true;
+  });
+  results.sort((a, b) => b.stats.total_occurrences - a.stats.total_occurrences || a.target.localeCompare(b.target));
+  if (opts.limit !== void 0)
+    results = results.slice(0, opts.limit);
+  return results;
+}
+function suggestCanonical(group, counts) {
+  return [...group].sort((a, b) => {
+    var _a, _b;
+    return ((_a = counts.get(b)) != null ? _a : 0) - ((_b = counts.get(a)) != null ? _b : 0) || a.localeCompare(b);
+  })[0];
+}
+function formatClustersJson(groups, threshold, counts) {
+  return groups.map((g) => JSON.stringify({
+    size: g.length,
+    threshold,
+    targets: g,
+    ...counts && {
+      canonical: suggestCanonical(g, counts),
+      occurrences: Object.fromEntries(g.map((t) => {
+        var _a;
+        return [t, (_a = counts.get(t)) != null ? _a : 0];
+      }))
+    }
+  }));
+}
+function formatSummary(links) {
+  const header = `${"count".padStart(5)}  ${"class".padEnd(10)}  ${"conf".padEnd(7)}  target`;
+  const divider = "-".repeat(80);
+  const rows = links.map((l) => `${String(l.stats.total_occurrences).padStart(5)}  ${l.expected_destination.padEnd(10)}  ${l.classification_confidence.padEnd(7)}  ${l.target}`);
+  return [header, divider, ...rows].join("\n");
+}
+function formatDetailed(links) {
+  const out = [];
+  for (const link of links) {
+    out.push(`
+=== ${link.target}  (${link.expected_destination}, ${link.classification_confidence} confidence, ${link.stats.total_occurrences}x)`);
+    for (const occ of link.occurrences) {
+      const loc = `${occ.source}:${occ.line}`;
+      const tag = occ.semantic_type ? ` [${occ.semantic_type}]` : "";
+      const alias = occ.alias ? ` |${occ.alias}` : "";
+      out.push(`  ${loc}${tag}${alias}`);
+      out.push(`    \u2026${occ.context_before} [[${link.target}${alias}]] ${occ.context_after}\u2026`);
+    }
+  }
+  return out.join("\n");
+}
+
+// src/lite/qvoidLite.ts
+var QvoidLite = class {
+  constructor(vectors, records) {
+    this.vectors = vectors;
+    this.records = records;
+  }
+  static async load(app, dir) {
+    const recordsPath = `${dir}/records.jsonl`;
+    if (!await app.vault.adapter.exists(recordsPath))
+      return null;
+    const vectors = await VectorSet.load(app, dir, (m) => m.items.length);
+    if (!vectors)
+      return null;
+    const records = (await app.vault.adapter.read(recordsPath)).split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    return new QvoidLite(vectors, records);
+  }
+  get exportedAt() {
+    return this.vectors.manifest.exportedAt;
+  }
+  /** `qvoid collections` text, as parsed by parseCollectionNames. */
+  collectionList() {
+    return `  ${this.vectors.manifest.collection}  (lite export)`;
+  }
+  query(opts) {
+    const filtered = filterLinks(this.records, opts);
+    if (opts.format === "json") {
+      return { stdout: filtered.map((l) => JSON.stringify(l)).join("\n"), stderr: "" };
+    }
+    const text3 = opts.format === "detailed" ? formatDetailed(filtered) : formatSummary(filtered);
+    return { stdout: text3, stderr: `${filtered.length} of ${this.records.length} targets match.` };
+  }
+  findSimilar(query, opts) {
+    if (opts.cluster)
+      return this.cluster(opts);
+    if (!query)
+      throw new Error("Provide a query string or pass --cluster.");
+    const { items } = this.vectors.manifest;
+    const exact = items.indexOf(query);
+    const q = exact >= 0 ? this.vectors.itemVector(exact) : this.vectors.embedQuery(query);
+    if (!q)
+      throw new Error("None of the query's words are in the export's word table (lite mode).");
+    const results = items.map((target, i) => ({ target, score: this.vectors.score(q, i) })).filter((r) => r.target !== query && r.score >= opts.minScore).sort((a, b) => b.score - a.score).slice(0, opts.topK);
+    if (results.length === 0)
+      return { stdout: "", stderr: "No matches above threshold." };
+    if (opts.format === "json") {
+      return { stdout: results.map((r) => JSON.stringify(r)).join("\n"), stderr: "" };
+    }
+    const lines = results.map((r) => `  ${r.score.toFixed(3)}  ${r.target}`);
+    return { stdout: [`Top ${results.length} similar targets to: ${JSON.stringify(query)}`, ...lines].join("\n"), stderr: "" };
+  }
+  /** Union-find over pairs at or above the threshold — qvoid's clusterDuplicates. */
+  cluster(opts) {
+    const { items } = this.vectors.manifest;
+    const parent = items.map((_, i) => i);
+    const find = (x) => {
+      while (parent[x] !== x)
+        x = parent[x] = parent[parent[x]];
+      return x;
+    };
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        if (this.vectors.similarity(i, j) >= opts.threshold)
+          parent[find(i)] = find(j);
+      }
+    }
+    const groups = /* @__PURE__ */ new Map();
+    items.forEach((t, i) => {
+      var _a;
+      return groups.set(find(i), [...(_a = groups.get(find(i))) != null ? _a : [], t]);
+    });
+    const clusters = [...groups.values()].filter((g) => g.length > 1).map((g) => g.sort()).sort((a, b) => b.length - a.length);
+    const stderr = `${clusters.length} clusters at threshold ${opts.threshold}.`;
+    if (opts.format === "json")
+      return { stdout: formatClustersJson(clusters, opts.threshold).join("\n"), stderr };
+    const text3 = clusters.map((g) => [`
+--- cluster (${g.length} targets)`, ...g.map((t) => `  ${t}`)].join("\n")).join("\n");
+    return { stdout: text3, stderr };
+  }
+};
+
+// src/lite/qimgLite.ts
+var RRF_K2 = 60;
+var QimgLite = class {
+  constructor(vectors) {
+    this.vectors = vectors;
+    this.keyword = null;
+    this.rowOf = new Map(vectors.manifest.items.map((img, row) => [img, row]));
+  }
+  static async load(app, dir) {
+    const vectors = await VectorSet.load(app, dir, (m) => m.items.length);
+    return vectors ? new QimgLite(vectors) : null;
+  }
+  get exportedAt() {
+    return this.vectors.manifest.exportedAt;
+  }
+  get images() {
+    return this.vectors.manifest.images;
+  }
+  /** `qimg collection list` text, as parsed by parseCollectionNames ("name\t..." per line). */
+  collectionList() {
+    return [...new Set(this.images.map((i) => i.collection))].map((c) => `${c}	(lite export)`).join("\n");
+  }
+  /** Same filters as qimg's SQL: an image without a date never passes a date filter. */
+  passes(img, opts) {
+    if (opts.collection && img.collection !== opts.collection)
+      return false;
+    if (opts.after !== void 0 && (img.taken_at === null || img.taken_at < opts.after))
+      return false;
+    if (opts.before !== void 0 && (img.taken_at === null || img.taken_at > opts.before))
+      return false;
+    return true;
+  }
+  hit(i, score) {
+    const img = this.images[i];
+    return { path: img.file, vault_path: img.path, collection: img.collection, caption: img.caption, sidecar_path: img.sidecar, score };
+  }
+  /** Keyword search over path, filename, caption, EXIF and OCR text; every term must match,
+   *  as in qimg's FTS5 query. Scores are relative to the best hit. */
+  tsearch(query, opts) {
+    var _a, _b;
+    if (!query.trim())
+      return [];
+    if (!this.keyword) {
+      this.keyword = new MiniSearch({ fields: ["path", "filename", "caption", "exif_text", "ocr_text"] });
+      this.keyword.addAll(
+        this.images.map((img, id) => {
+          var _a2, _b2, _c, _d;
+          return {
+            id,
+            path: img.file,
+            filename: (_a2 = img.file.split("/").pop()) != null ? _a2 : img.file,
+            caption: (_b2 = img.caption) != null ? _b2 : "",
+            exif_text: (_c = img.exif_text) != null ? _c : "",
+            ocr_text: (_d = img.ocr_text) != null ? _d : ""
+          };
+        })
+      );
+    }
+    const results = this.keyword.search(query, {
+      combineWith: "AND",
+      prefix: true,
+      filter: (r) => this.passes(this.images[r.id], opts)
+    });
+    const top = (_b = (_a = results[0]) == null ? void 0 : _a.score) != null ? _b : 1;
+    return results.slice(0, opts.limit).map((r) => this.hit(r.id, r.score / top));
+  }
+  /** Vector search by text (mean of word vectors) or by an image already in the export. */
+  vsearch(query, image, opts) {
+    let q;
+    if (image) {
+      const i = this.findImage(image);
+      const row = i === null ? void 0 : this.rowOf.get(i);
+      if (row === void 0) {
+        throw new Error(`--image needs an image that is in the export (lite mode can't embed new images): ${image}`);
+      }
+      q = this.vectors.itemVector(row);
+    } else {
+      if (!(query == null ? void 0 : query.trim()))
+        throw new Error("Provide a query or --image.");
+      q = this.vectors.embedQuery(query);
+      if (!q)
+        throw new Error("None of the query's words are in the export's word table (lite mode).");
+    }
+    const qv = q;
+    return this.vectors.manifest.items.map((img, row) => ({ img, score: this.vectors.score(qv, row) })).filter((r) => this.passes(this.images[r.img], opts)).sort((a, b) => b.score - a.score).slice(0, opts.limit).map((r) => this.hit(r.img, r.score));
+  }
+  /** qimg's hybridQuery: RRF (k=60) over 2×limit keyword + vector hits; score is the raw RRF sum. */
+  hsearch(query, image, opts) {
+    const wide = { ...opts, limit: opts.limit * 2 };
+    const keyword = image ? [] : this.tsearch(query != null ? query : "", wide);
+    let vector = [];
+    try {
+      vector = this.vsearch(query, image, wide);
+    } catch (e) {
+      if (image || keyword.length === 0)
+        throw e;
+    }
+    const fused = /* @__PURE__ */ new Map();
+    for (const hits of [keyword, vector]) {
+      hits.forEach((hit, rank) => {
+        var _a;
+        const e = (_a = fused.get(hit.vault_path)) != null ? _a : { hit, score: 0 };
+        e.score += 1 / (RRF_K2 + rank + 1);
+        fused.set(hit.vault_path, e);
+      });
+    }
+    return [...fused.values()].sort((a, b) => b.score - a.score).slice(0, opts.limit).map(({ hit, score }) => ({ ...hit, score }));
+  }
+  /** `qimg get`: exact path, "collection/path", or a path suffix such as a bare filename. */
+  get(target) {
+    const i = this.findImage(target);
+    if (i === null)
+      throw new Error(`not found: ${target}`);
+    const img = this.images[i];
+    return {
+      collection: img.collection,
+      path: img.file,
+      vault_path: img.path,
+      hash: img.hash,
+      width: img.width,
+      height: img.height,
+      mime: img.mime,
+      taken_at: img.taken_at,
+      caption: img.caption,
+      exif_text: img.exif_text,
+      ocr_text: img.ocr_text,
+      sidecar_path: img.sidecar
+    };
+  }
+  findImage(target) {
+    const t = target.replace(/^\/+/, "");
+    const i = this.images.findIndex(
+      (img) => img.path === t || img.file === t || `${img.collection}/${img.file}` === t || img.path.endsWith(`/${t}`)
+    );
+    return i < 0 ? null : i;
+  }
+};
+
+// src/lite/liteClient.ts
+var LITE_COMMANDS = {
+  qmd: {
+    vsearch: ["-n", "-c", "--all", "--min-score"],
+    tsearch: ["-n", "-c", "--all", "--min-score"],
+    hsearch: ["-n", "-c", "--all", "--min-score"],
+    fsearch: ["-n", "-c"],
+    get: "all",
+    "collection.list": "all"
+  },
+  qvoid: {
+    query: "all",
+    "find-similar": ["--cluster", "--top-k", "--min-score", "--threshold", "--format"],
+    collections: "all"
+  },
+  qimg: {
+    tsearch: ["--collection", "--after", "--before", "-n"],
+    vsearch: "all",
+    hsearch: "all",
+    get: "all",
+    "collection.list": "all"
+  }
+};
+function hasLiteMode(tool) {
+  return tool in LITE_COMMANDS;
+}
+var LiteBackends = class {
+  constructor(app, exportDir) {
+    this.app = app;
+    this.exportDir = exportDir;
+    this.cache = {};
+  }
+  qmd() {
+    return this.get("qmd", (dir) => QmdLite.load(this.app, dir));
+  }
+  qvoid() {
+    return this.get("qvoid", (dir) => QvoidLite.load(this.app, dir));
+  }
+  qimg() {
+    return this.get("qimg", (dir) => QimgLite.load(this.app, dir));
+  }
+  /** Whichever export backs `tool`, for callers that only need what they share (e.g. exportedAt). */
+  forTool(tool) {
+    return tool === "qmd" ? this.qmd() : tool === "qvoid" ? this.qvoid() : this.qimg();
+  }
+  async get(tool, load2) {
+    var _a, _b;
+    const dir = (0, import_obsidian12.normalizePath)(`${this.exportDir()}/${tool}`);
+    const mtime = (_b = (_a = await this.app.vault.adapter.stat(`${dir}/manifest.json`)) == null ? void 0 : _a.mtime) != null ? _b : 0;
+    const cached = this.cache[tool];
+    if (cached && cached.mtime === mtime)
+      return cached.backend;
+    const backend = load2(dir);
+    this.cache[tool] = { mtime, backend };
+    return backend;
+  }
+};
+var num = (v) => {
+  if (v === void 0 || v === null || v === "")
+    return void 0;
+  const n = Number(v);
+  return isNaN(n) ? void 0 : n;
+};
+var str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
+var list2 = (v) => (Array.isArray(v) ? v : v === void 0 ? [] : [v]).map(String).filter(Boolean);
+var LiteClient = class {
+  constructor(tool, schema, backends) {
+    this.tool = tool;
+    this.schema = schema;
+    this.backends = backends;
+  }
+  updatePath() {
+  }
+  listCommands() {
+    var _a;
+    const supported = (_a = LITE_COMMANDS[this.tool]) != null ? _a : {};
+    return this.schema.commands.filter((c) => c.id in supported).map((c) => {
+      const flags = supported[c.id];
+      return flags === "all" ? c : { ...c, flags: c.flags.filter((f) => flags.includes(f.flag)) };
+    });
+  }
+  async runCommand(commandId, values = {}) {
+    try {
+      return await this.dispatch(commandId, values);
+    } catch (error) {
+      return { stdout: "", stderr: error.message, code: 1 };
+    }
+  }
+  async runCommandStreaming(commandId, values = {}, onStdout, onStderr) {
+    const command = this.listCommands().find((c) => c.id === commandId);
+    if (!command)
+      throw new Error(`"${commandId}" isn't available in lite mode`);
+    const done = this.runCommand(commandId, values).then((r) => {
+      if (r.stdout)
+        onStdout == null ? void 0 : onStdout(r.stdout);
+      if (r.stderr)
+        onStderr == null ? void 0 : onStderr(r.stderr);
+      return r;
+    });
+    return { kill: () => void 0, done, argv: command.argvPath, command };
+  }
+  async dispatch(commandId, values) {
+    if (this.tool === "qmd")
+      return this.runQmd(commandId, values);
+    if (this.tool === "qvoid")
+      return this.runQvoid(commandId, values);
+    if (this.tool === "qimg")
+      return this.runQimg(commandId, values);
+    throw new Error(`${this.tool} has no lite mode`);
+  }
+  async runQimg(commandId, values) {
+    var _a, _b;
+    const qimg = await this.backends.qimg();
+    if (!qimg)
+      throw new Error("No qimg export found. Run `qimg export` on a desktop with qimg installed.");
+    const json = (data) => ({ stdout: JSON.stringify(data, null, 2), stderr: "", code: 0, json: data });
+    const date = (v, endOfDay) => {
+      const s = str(v);
+      if (!s)
+        return void 0;
+      const d = new Date(s);
+      if (isNaN(d.getTime()))
+        throw new Error(`invalid date: ${s} (expected YYYY-MM-DD)`);
+      if (endOfDay)
+        d.setHours(23, 59, 59, 999);
+      return d.getTime();
+    };
+    const opts = {
+      limit: (_a = num(values["-n"])) != null ? _a : 20,
+      collection: str(values["--collection"]),
+      after: date(values["--after"], false),
+      before: date(values["--before"], true)
+    };
+    const query = str(values.query);
+    const image = str(values["--image"]);
+    switch (commandId) {
+      case "tsearch":
+        return json(qimg.tsearch(query != null ? query : "", opts));
+      case "vsearch":
+        return json(qimg.vsearch(query, image, opts));
+      case "hsearch":
+        return json(qimg.hsearch(query, image, opts));
+      case "get":
+        return json(qimg.get((_b = str(values.target)) != null ? _b : ""));
+      case "collection.list":
+        return { stdout: qimg.collectionList(), stderr: "", code: 0 };
+    }
+    throw new Error(`"${commandId}" isn't available in lite mode`);
+  }
+  async runQmd(commandId, values) {
+    var _a, _b, _c, _d;
+    const qmd = await this.backends.qmd();
+    if (!qmd)
+      throw new Error("No qmd export found. Run `qmd export` on a desktop with qmd installed.");
+    const json = (data) => ({ stdout: JSON.stringify(data, null, 2), stderr: "", code: 0, json: data });
+    const search2 = (defaultMinScore) => {
+      var _a2, _b2;
+      return {
+        limit: values["--all"] === true ? Infinity : (_a2 = num(values["-n"])) != null ? _a2 : 20,
+        collections: list2(values["-c"]),
+        minScore: (_b2 = num(values["--min-score"])) != null ? _b2 : defaultMinScore
+      };
+    };
+    const query = (_a = str(values.query)) != null ? _a : "";
+    switch (commandId) {
+      case "vsearch":
+        return json(await qmd.vsearch(query, search2(0.3)));
+      case "tsearch":
+        return json(await qmd.tsearch(query, search2(0)));
+      case "hsearch":
+        return json(await qmd.hsearch(query, search2(0)));
+      case "fsearch":
+        return json(await qmd.fsearch((_b = str(values.filter)) != null ? _b : "", { ...search2(0), limit: (_c = num(values["-n"])) != null ? _c : 50 }));
+      case "collection.list":
+        return { stdout: qmd.collectionList(), stderr: "", code: 0 };
+      case "get": {
+        const text3 = await qmd.get((_d = str(values.target)) != null ? _d : "", {
+          section: str(values["--section"]),
+          noCallouts: values["--no-callouts"] === true,
+          noCodeblocks: values["--no-codeblocks"] === true,
+          from: num(values["--from"]),
+          lines: num(values["-l"]),
+          lineNumbers: values["--line-numbers"] === true
+        });
+        return { stdout: text3, stderr: "", code: 0 };
+      }
+    }
+    throw new Error(`"${commandId}" isn't available in lite mode`);
+  }
+  async runQvoid(commandId, values) {
+    var _a, _b, _c, _d, _e, _f;
+    const qvoid = await this.backends.qvoid();
+    if (!qvoid)
+      throw new Error("No qvoid export found. Run `qvoid export` on a desktop with qvoid installed.");
+    const out = (o) => ({ ...o, code: 0 });
+    switch (commandId) {
+      case "collections":
+        return out({ stdout: qvoid.collectionList(), stderr: "" });
+      case "query":
+        return out(
+          qvoid.query({
+            destination: (_a = str(values["--destination"])) == null ? void 0 : _a.split(",").map((s) => s.trim()).filter(Boolean),
+            origin: str(values["--origin"]),
+            semanticType: str(values["--semantic-type"]),
+            minOccurrences: num(values["--min-occurrences"]),
+            search: str(values["--search"]),
+            limit: num(values["--limit"]),
+            format: (_b = str(values["--format"])) != null ? _b : "summary"
+          })
+        );
+      case "find-similar":
+        return out(
+          qvoid.findSimilar(str(values.query), {
+            cluster: values["--cluster"] === true,
+            topK: (_c = num(values["--top-k"])) != null ? _c : 10,
+            minScore: (_d = num(values["--min-score"])) != null ? _d : 0.5,
+            threshold: (_e = num(values["--threshold"])) != null ? _e : 0.82,
+            format: (_f = str(values["--format"])) != null ? _f : "text"
+          })
+        );
+    }
+    throw new Error(`"${commandId}" isn't available in lite mode`);
+  }
+};
+
 // src/views/cliConsoleView.ts
 var COLLECTION_LIST_COMMAND_ID = {
   qmd: "collection.list",
@@ -10529,7 +13738,7 @@ var CATEGORY_TABS = [
   { id: "infra", label: "Setup / Infra" }
 ];
 var CLI_CONSOLE_VIEW_TYPE = "pkm-rag-cli-console";
-var ConfirmRunModal = class extends import_obsidian9.Modal {
+var ConfirmRunModal = class extends import_obsidian13.Modal {
   constructor(app, message, onConfirm) {
     super(app);
     this.message = message;
@@ -10546,10 +13755,11 @@ var ConfirmRunModal = class extends import_obsidian9.Modal {
     });
   }
 };
-var CliConsoleView = class extends import_obsidian9.ItemView {
+var CliConsoleView = class extends import_obsidian13.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.clients = {};
+    this.liteClients = {};
     this.currentTool = "qmd";
     this.currentCategory = "search";
     this.currentCommand = null;
@@ -10576,11 +13786,13 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       toolSelect.createEl("option", { value: id, text: TOOLS[id].displayName });
     }
     toolSelect.value = this.currentTool;
+    this.modeBadgeEl = header.createSpan({ cls: "pkm-rag-console-mode-badge" });
     toolSelect.addEventListener("change", () => {
       this.currentTool = toolSelect.value;
       this.currentCategory = "search";
       this.currentCommand = null;
       this.values = {};
+      this.renderModeBadge();
       this.renderCategoryTabs();
       this.renderCommandList();
       this.renderForm();
@@ -10606,9 +13818,22 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
     });
     this.resultsEl = container.createDiv({ cls: "pkm-rag-console-results pkm-rag-hidden" });
     this.outputEl = container.createEl("pre", { cls: "pkm-rag-console-output" });
+    this.renderModeBadge();
     this.renderCategoryTabs();
     this.renderCommandList();
     this.renderForm();
+  }
+  /** Shows when results come from a tool export rather than the CLI, and how old it is. */
+  renderModeBadge() {
+    const tool = this.currentTool;
+    this.modeBadgeEl.setText("");
+    if (!this.plugin.usesLiteMode(tool))
+      return;
+    void this.plugin.liteBackends.forTool(tool).then((b) => {
+      if (this.currentTool !== tool)
+        return;
+      this.modeBadgeEl.setText(b ? `Lite \xB7 exported ${b.exportedAt.slice(0, 10)}` : "Lite \xB7 no export found");
+    }).catch((e) => this.modeBadgeEl.setText(`Lite \xB7 ${e.message}`));
   }
   async onClose() {
     var _a;
@@ -10616,6 +13841,14 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
   }
   getClient(id) {
     const tool = TOOLS[id];
+    if (this.plugin.usesLiteMode(id)) {
+      let lite = this.liteClients[id];
+      if (!lite) {
+        lite = new LiteClient(id, tool.schema, this.plugin.liteBackends);
+        this.liteClients[id] = lite;
+      }
+      return lite;
+    }
     let client = this.clients[id];
     if (!client) {
       client = new GenericCliClient(
@@ -10712,7 +13945,7 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       if (this.values[JSON_OUTPUT_VALUE_KEY] === void 0) {
         this.values[JSON_OUTPUT_VALUE_KEY] = true;
       }
-      new import_obsidian9.Setting(this.formEl).setName("Output as JSON").addToggle(
+      new import_obsidian13.Setting(this.formEl).setName("Output as JSON").addToggle(
         (toggle) => toggle.setValue(!!this.values[JSON_OUTPUT_VALUE_KEY]).onChange((value) => {
           this.values[JSON_OUTPUT_VALUE_KEY] = value;
         })
@@ -10723,7 +13956,7 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
     var _a, _b;
     const label = positional.label + (positional.required ? " *" : "");
     if (positional.type === "enum" && positional.enumValues) {
-      new import_obsidian9.Setting(container).setName(label).setDesc((_a = positional.description) != null ? _a : "").addDropdown((dd) => {
+      new import_obsidian13.Setting(container).setName(label).setDesc((_a = positional.description) != null ? _a : "").addDropdown((dd) => {
         dd.addOption("", "\u2014");
         for (const v of positional.enumValues)
           dd.addOption(v, v);
@@ -10733,7 +13966,7 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       });
       return;
     }
-    new import_obsidian9.Setting(container).setName(label).setDesc((_b = positional.description) != null ? _b : "").addText(
+    new import_obsidian13.Setting(container).setName(label).setDesc((_b = positional.description) != null ? _b : "").addText(
       (text3) => text3.onChange((v) => {
         this.values[positional.name] = positional.type === "number" ? v === "" ? void 0 : Number(v) : v;
       })
@@ -10762,7 +13995,7 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
     if (flag.type === "boolean") {
       const initial = effectiveDefault === "true";
       this.values[flag.flag] = initial;
-      new import_obsidian9.Setting(container).setName(flag.label).setDesc((_a = flag.description) != null ? _a : "").addToggle(
+      new import_obsidian13.Setting(container).setName(flag.label).setDesc((_a = flag.description) != null ? _a : "").addToggle(
         (toggle) => toggle.setValue(initial).onChange((v) => {
           this.values[flag.flag] = v;
         })
@@ -10776,7 +14009,7 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
     if (flag.type === "enum" && flag.enumValues) {
       if (effectiveDefault !== void 0)
         this.values[flag.flag] = effectiveDefault;
-      new import_obsidian9.Setting(container).setName(flag.label).setDesc((_b = flag.description) != null ? _b : "").addDropdown((dd) => {
+      new import_obsidian13.Setting(container).setName(flag.label).setDesc((_b = flag.description) != null ? _b : "").addDropdown((dd) => {
         dd.addOption("", "\u2014");
         for (const v of flag.enumValues)
           dd.addOption(v, v);
@@ -10791,7 +14024,7 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
     if (effectiveDefault !== void 0) {
       this.values[flag.flag] = flag.type === "number" ? Number(effectiveDefault) : effectiveDefault;
     }
-    new import_obsidian9.Setting(container).setName(flag.label).setDesc((_c = flag.description) != null ? _c : "").addText((text3) => {
+    new import_obsidian13.Setting(container).setName(flag.label).setDesc((_c = flag.description) != null ? _c : "").addText((text3) => {
       if (effectiveDefault !== void 0)
         text3.setValue(effectiveDefault);
       text3.onChange((v) => {
@@ -10826,7 +14059,7 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
     if (effectiveDefault !== void 0)
       this.values[flag.flag] = effectiveDefault;
     let selectEl;
-    new import_obsidian9.Setting(container).setName(flag.label).setDesc((_a = flag.description) != null ? _a : "").addDropdown((dd) => {
+    new import_obsidian13.Setting(container).setName(flag.label).setDesc((_a = flag.description) != null ? _a : "").addDropdown((dd) => {
       selectEl = dd.selectEl;
       dd.addOption("", "All collections");
       dd.setValue("");
@@ -10926,7 +14159,7 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
       return;
     for (const positional of command.positionals) {
       if (positional.required && !this.values[positional.name]) {
-        new import_obsidian9.Notice(`"${positional.label}" is required.`);
+        new import_obsidian13.Notice(`"${positional.label}" is required.`);
         return;
       }
     }
@@ -11033,7 +14266,7 @@ var CliConsoleView = class extends import_obsidian9.ItemView {
 };
 
 // src/main.ts
-var PkmRagPlugin = class extends import_obsidian10.Plugin {
+var PkmRagPlugin = class extends import_obsidian14.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -11044,6 +14277,19 @@ var PkmRagPlugin = class extends import_obsidian10.Plugin {
     );
     /** In-memory (not persisted) last-known status per tool, read by settings tab / console. */
     this.toolStatus = {};
+    /** Tool exports in the vault, for the console's lite mode. */
+    this.liteBackends = new LiteBackends(this.app, () => this.settings.liteExportDir);
+  }
+  /** Whether the console should answer `tool` from its export instead of the CLI: forced in
+   *  settings, always on mobile, or when detection found the CLI missing/broken. */
+  usesLiteMode(tool) {
+    var _a;
+    if (!hasLiteMode(tool))
+      return false;
+    if (this.settings.forceLiteMode || !import_obsidian14.Platform.isDesktopApp)
+      return true;
+    const status = (_a = this.toolStatus[tool]) == null ? void 0 : _a.status;
+    return status !== void 0 && status !== "healthy";
   }
   async onload() {
     await this.loadSettings();
@@ -11058,21 +14304,23 @@ var PkmRagPlugin = class extends import_obsidian10.Plugin {
     this.registerView(CLI_CONSOLE_VIEW_TYPE, (leaf) => new CliConsoleView(leaf, this));
     this.registerHoverLinkSource("pkm-rag", { display: "PKM RAG", defaultMod: false });
     this.addSettingTab(new PkmRagSettingTab(this.app, this));
-    this.addCommand({
-      id: "show-related",
-      name: "Show related notes",
-      callback: () => this.activateView(RELATED_NOTES_VIEW_TYPE)
-    });
-    this.addCommand({
-      id: "open-chat",
-      name: "Open chat",
-      callback: () => this.activateView(CHAT_VIEW_TYPE)
-    });
-    this.addCommand({
-      id: "open-setup-wizard",
-      name: "Open PKM tools setup wizard",
-      callback: () => new SetupWizardModal(this.app, this).open()
-    });
+    if (import_obsidian14.Platform.isDesktopApp) {
+      this.addCommand({
+        id: "show-related",
+        name: "Show related notes",
+        callback: () => this.activateView(RELATED_NOTES_VIEW_TYPE)
+      });
+      this.addCommand({
+        id: "open-chat",
+        name: "Open chat",
+        callback: () => this.activateView(CHAT_VIEW_TYPE)
+      });
+      this.addCommand({
+        id: "open-setup-wizard",
+        name: "Open PKM tools setup wizard",
+        callback: () => new SetupWizardModal(this.app, this).open()
+      });
+    }
     this.addCommand({
       id: "open-cli-console",
       name: "Open CLI console",
@@ -11083,6 +14331,8 @@ var PkmRagPlugin = class extends import_obsidian10.Plugin {
         this.refreshRelatedNotesView();
       })
     );
+    if (!import_obsidian14.Platform.isDesktopApp)
+      return;
     if (!this.settings.setupWizardShown) {
       this.settings.setupWizardShown = true;
       await this.saveSettings();
@@ -11090,7 +14340,7 @@ var PkmRagPlugin = class extends import_obsidian10.Plugin {
     } else {
       const qmdAvailable = await this.qmdClient.isAvailable();
       if (!qmdAvailable) {
-        new import_obsidian10.Notice("QMD is not available. Please install QMD and configure the path in settings.");
+        new import_obsidian14.Notice("QMD is not available. Please install QMD and configure the path in settings.");
       }
     }
   }

@@ -6,5 +6,5 @@
 	"description": "Local RAG-powered knowledge assistant: find related notes, ask questions, explore connections, and challenge ideas using your own vault.",
 	"author": "Idan Ariav",
 	"authorUrl": "https://github.com/idanariav",
-	"isDesktopOnly": true
+	"isDesktopOnly": false
 }

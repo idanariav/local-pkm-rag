@@ -223,6 +223,25 @@ export class PkmRagSettingTab extends PluginSettingTab {
 			this.renderToolSetting(containerEl, id);
 		}
 
+		containerEl.createEl("h4", { text: "Lite mode" });
+		containerEl.createEl("p", {
+			text: "Without a CLI (always on mobile), the console answers qmd, qvoid and qimg searches from exports in the vault. Create them with `qmd export`, `qvoid export` and `qimg export`.",
+			cls: "setting-item-description",
+		});
+		this.addTextSetting(containerEl, "Export folder", "Vault folder containing the qmd/, qvoid/ and qimg/ exports",
+			"Scaffolding/Embeddings",
+			() => this.plugin.settings.liteExportDir,
+			(v) => { this.plugin.settings.liteExportDir = v.trim(); });
+		new Setting(containerEl)
+			.setName("Always use lite mode")
+			.setDesc("Use the exports even when the CLIs are installed (for testing lite mode on desktop).")
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.forceLiteMode).onChange(async (value) => {
+					this.plugin.settings.forceLiteMode = value;
+					await this.plugin.saveSettings();
+				})
+			);
+
 		containerEl.createEl("h4", { text: "QMD (RAG chat)" });
 		this.addTextSetting(containerEl, "Default collection", "QMD collection to search by default (leave empty for all)",
 			"",

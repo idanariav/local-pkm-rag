@@ -1,11 +1,11 @@
-import { existsSync, readdirSync, accessSync, constants as fsConstants } from "fs";
-import { homedir } from "os";
-import { join, delimiter } from "path";
-import { spawn } from "child_process";
+import { nodeChildProcess, nodeFs, nodeOs, nodePath } from "./nodeModules";
 
 let cachedEnvPromise: Promise<NodeJS.ProcessEnv> | undefined;
 
 function highestNvmNodeBin(): string | undefined {
+	const { existsSync, readdirSync } = nodeFs();
+	const { join } = nodePath();
+	const { homedir } = nodeOs();
 	const nvmDir = join(homedir(), ".nvm", "versions", "node");
 	if (!existsSync(nvmDir)) return undefined;
 	try {
@@ -28,6 +28,9 @@ function highestNvmNodeBin(): string | undefined {
 /** Directories that commonly hold Node/npm-installed global binaries but aren't
  *  on Electron's minimal subprocess PATH (which isn't sourced from .zshrc/.bashrc). */
 function staticCandidateDirs(): string[] {
+	const { existsSync } = nodeFs();
+	const { join } = nodePath();
+	const { homedir } = nodeOs();
 	const home = homedir();
 	const candidates =
 		process.platform === "win32"
@@ -47,6 +50,9 @@ function staticCandidateDirs(): string[] {
 
 /** Best-effort: ask npm (if reachable at all via the current PATH) where its global bin dir is. */
 function npmPrefixBin(): Promise<string | undefined> {
+	const { existsSync } = nodeFs();
+	const { join } = nodePath();
+	const { spawn } = nodeChildProcess();
 	return new Promise((resolve) => {
 		try {
 			const child = spawn("npm", ["config", "get", "prefix"], { shell: false, env: process.env });
@@ -71,6 +77,7 @@ function npmPrefixBin(): Promise<string | undefined> {
 export async function buildAugmentedEnv(): Promise<NodeJS.ProcessEnv> {
 	if (!cachedEnvPromise) {
 		cachedEnvPromise = (async () => {
+			const { delimiter } = nodePath();
 			const dirs = staticCandidateDirs();
 			const npmBin = await npmPrefixBin();
 			if (npmBin && !dirs.includes(npmBin)) dirs.push(npmBin);
@@ -94,6 +101,8 @@ export function resetAugmentedEnvCache(): void {
  *  directories, so a successful bare-name detection can be persisted as a real path
  *  rather than just the literal binary name. */
 export function findExecutableInPath(binaryName: string, env: NodeJS.ProcessEnv): string | undefined {
+	const { existsSync, accessSync, constants: fsConstants } = nodeFs();
+	const { join, delimiter } = nodePath();
 	const dirs = (env.PATH ?? "").split(delimiter).filter(Boolean);
 	for (const dir of dirs) {
 		const candidate = join(dir, binaryName);

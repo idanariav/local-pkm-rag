@@ -11,6 +11,7 @@ import {
 	NormalizedResult,
 } from "../cli/resultNormalizer";
 import { renderFileLink } from "./fileLink";
+import { ConsoleClient, LiteClient, LiteTool } from "../lite/liteClient";
 
 /** Tools whose collection-listing output we know how to parse into plain names for
  *  live chip suggestions, and which command lists them (qvoid's is "collections",
@@ -52,6 +53,8 @@ class ConfirmRunModal extends Modal {
 export class CliConsoleView extends ItemView {
 	private readonly plugin: PkmRagPlugin;
 	private readonly clients: Partial<Record<ToolId, GenericCliClient>> = {};
+	private readonly liteClients: Partial<Record<ToolId, LiteClient>> = {};
+	private modeBadgeEl!: HTMLElement;
 	private currentTool: ToolId = "qmd";
 	private currentCategory: CommandCategory = "search";
 	private currentCommand: CommandNode | null = null;
@@ -95,11 +98,13 @@ export class CliConsoleView extends ItemView {
 			toolSelect.createEl("option", { value: id, text: TOOLS[id].displayName });
 		}
 		toolSelect.value = this.currentTool;
+		this.modeBadgeEl = header.createSpan({ cls: "pkm-rag-console-mode-badge" });
 		toolSelect.addEventListener("change", () => {
 			this.currentTool = toolSelect.value as ToolId;
 			this.currentCategory = "search";
 			this.currentCommand = null;
 			this.values = {};
+			this.renderModeBadge();
 			this.renderCategoryTabs();
 			this.renderCommandList();
 			this.renderForm();
@@ -128,17 +133,40 @@ export class CliConsoleView extends ItemView {
 		this.resultsEl = container.createDiv({ cls: "pkm-rag-console-results pkm-rag-hidden" });
 		this.outputEl = container.createEl("pre", { cls: "pkm-rag-console-output" });
 
+		this.renderModeBadge();
 		this.renderCategoryTabs();
 		this.renderCommandList();
 		this.renderForm();
+	}
+
+	/** Shows when results come from a tool export rather than the CLI, and how old it is. */
+	private renderModeBadge(): void {
+		const tool = this.currentTool;
+		this.modeBadgeEl.setText("");
+		if (!this.plugin.usesLiteMode(tool)) return;
+		void this.plugin.liteBackends
+			.forTool(tool as LiteTool)
+			.then((b) => {
+				if (this.currentTool !== tool) return;
+				this.modeBadgeEl.setText(b ? `Lite · exported ${b.exportedAt.slice(0, 10)}` : "Lite · no export found");
+			})
+			.catch((e: Error) => this.modeBadgeEl.setText(`Lite · ${e.message}`));
 	}
 
 	async onClose(): Promise<void> {
 		this.activeKill?.();
 	}
 
-	private getClient(id: ToolId): GenericCliClient {
+	private getClient(id: ToolId): ConsoleClient {
 		const tool = TOOLS[id];
+		if (this.plugin.usesLiteMode(id)) {
+			let lite = this.liteClients[id];
+			if (!lite) {
+				lite = new LiteClient(id, tool.schema, this.plugin.liteBackends);
+				this.liteClients[id] = lite;
+			}
+			return lite;
+		}
 		let client = this.clients[id];
 		if (!client) {
 			client = new GenericCliClient(

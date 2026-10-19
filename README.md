@@ -144,6 +144,32 @@ Note content here...
 - **Manual**: Command palette → "Embed all notes"
 - **Automatic**: Notes are re-embedded on save (debounced)
 
+### Lite Mode (mobile, or desktop without the CLIs)
+
+When a tool's CLI isn't available, which is always the case on mobile, the CLI console answers the everyday search commands from exports the tools write into the vault. Related notes, chat and the setup wizard still need the desktop CLIs, so on mobile only **Open CLI console** is offered.
+
+1. On a desktop with the tools installed, run `qmd export`, `qvoid export` and `qimg export`, each with `--out <vault>/Scaffolding/Embeddings/<tool>`. To keep the exports current, set `export.path` in qmd's and qimg's `index.yml` and `[export] path` in the qvoid collection TOML. Then `qmd embed`, `qvoid index`/`embed` and `qimg index`/`embed`/`caption`/`ocr` re-export automatically.
+2. Let the folder sync to the other device. It's ~21 MB; keep it out of git.
+3. Settings → Tools → Lite mode: set the export folder (default `Scaffolding/Embeddings`). "Always use lite mode" forces it on desktop for testing.
+
+| Command | How lite mode answers it |
+|---|---|
+| qmd `vsearch` | Exported int8 vectors; the query vector is the mean of its words' vectors (no model on the device) |
+| qmd `tsearch` | MiniSearch over the same text qmd indexes (section-filtered collections included), built on first use and refreshed per changed file |
+| qmd `hsearch` | Reciprocal-rank fusion of the two above; no query expansion or LLM rerank |
+| qmd `fsearch` | qmd's own filter parser, evaluated against Obsidian's live metadata |
+| qmd `get` | Read directly from the vault (`--section`, `--no-callouts`, `--no-codeblocks`, `--from`, `-l`) |
+| qvoid `query` | qvoid's own `filterLinks` over the exported records |
+| qvoid `find-similar` | Exported vectors (exact target or word-mean query); `--cluster` computed live |
+| qimg `tsearch` | MiniSearch over path, filename, caption, EXIF and OCR text (all terms must match, as in qimg) |
+| qimg `vsearch` | Exported SigLIP image vectors; the query is the mean of its words' SigLIP text vectors. `--image` works for images already in the export |
+| qimg `hsearch` | qimg's own fusion (RRF over 2×limit keyword + vector hits) |
+| qimg `get` | Exported metadata (caption, OCR, EXIF, size, sidecar note) |
+
+The console shows a "Lite · exported <date>" badge. Vector hits whose note changed since the export are prefixed "(changed since export)".
+
+Fidelity against the CLIs on this vault: `fsearch` counts match or differ by a few notes (lite reads live files, the CLI its last index). `tsearch` shares 7/10 of the top-10; `vsearch` 7.3/10 (single-word queries vs qmd's pure vector search). `find-similar` shares 9.3/10, and clustering reproduces 45 of 46 clusters. qimg: `tsearch` 9.4/10, `vsearch` and `hsearch` 8.2/10 (single words 8–10, phrases such as "two people talking" down to 5).
+
 ## Architecture
 
 ### Project Structure

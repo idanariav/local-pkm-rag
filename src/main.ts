@@ -1,4 +1,4 @@
-import { Notice, Plugin } from "obsidian";
+import { Notice, Platform, Plugin } from "obsidian";
 import { PkmRagSettings, DEFAULT_SETTINGS, migrateLegacySettings } from "./settings";
 import { PkmRagSettingTab } from "./settingsTab";
 import { QmdClient } from "./cli/tools/qmdClient";
@@ -10,6 +10,7 @@ import { CliConsoleView, CLI_CONSOLE_VIEW_TYPE } from "./views/cliConsoleView";
 import { TOOLS } from "./cli/toolRegistry";
 import { detectBinary } from "./cli/binaryResolver";
 import { DetectResult, ToolId } from "./cli/types";
+import { LiteBackends, hasLiteMode } from "./lite/liteClient";
 
 export default class PkmRagPlugin extends Plugin {
 	settings: PkmRagSettings = DEFAULT_SETTINGS;
@@ -20,6 +21,17 @@ export default class PkmRagPlugin extends Plugin {
 	);
 	/** In-memory (not persisted) last-known status per tool, read by settings tab / console. */
 	toolStatus: Partial<Record<ToolId, DetectResult>> = {};
+	/** Tool exports in the vault, for the console's lite mode. */
+	liteBackends: LiteBackends = new LiteBackends(this.app, () => this.settings.liteExportDir);
+
+	/** Whether the console should answer `tool` from its export instead of the CLI: forced in
+	 *  settings, always on mobile, or when detection found the CLI missing/broken. */
+	usesLiteMode(tool: ToolId): boolean {
+		if (!hasLiteMode(tool)) return false;
+		if (this.settings.forceLiteMode || !Platform.isDesktopApp) return true;
+		const status = this.toolStatus[tool]?.status;
+		return status !== undefined && status !== "healthy";
+	}
 
 	async onload() {
 		await this.loadSettings();
@@ -41,24 +53,27 @@ export default class PkmRagPlugin extends Plugin {
 		// Add settings tab
 		this.addSettingTab(new PkmRagSettingTab(this.app, this));
 
-		// Register commands
-		this.addCommand({
-			id: "show-related",
-			name: "Show related notes",
-			callback: () => this.activateView(RELATED_NOTES_VIEW_TYPE),
-		});
+		// Register commands. Related notes, chat and the setup wizard drive the CLIs directly,
+		// so on mobile only the console (which falls back to lite mode) is offered.
+		if (Platform.isDesktopApp) {
+			this.addCommand({
+				id: "show-related",
+				name: "Show related notes",
+				callback: () => this.activateView(RELATED_NOTES_VIEW_TYPE),
+			});
 
-		this.addCommand({
-			id: "open-chat",
-			name: "Open chat",
-			callback: () => this.activateView(CHAT_VIEW_TYPE),
-		});
+			this.addCommand({
+				id: "open-chat",
+				name: "Open chat",
+				callback: () => this.activateView(CHAT_VIEW_TYPE),
+			});
 
-		this.addCommand({
-			id: "open-setup-wizard",
-			name: "Open PKM tools setup wizard",
-			callback: () => new SetupWizardModal(this.app, this).open(),
-		});
+			this.addCommand({
+				id: "open-setup-wizard",
+				name: "Open PKM tools setup wizard",
+				callback: () => new SetupWizardModal(this.app, this).open(),
+			});
+		}
 
 		this.addCommand({
 			id: "open-cli-console",
@@ -72,6 +87,9 @@ export default class PkmRagPlugin extends Plugin {
 				this.refreshRelatedNotesView();
 			})
 		);
+
+		// The wizard and the availability notice are about installing the CLIs, which mobile can't run.
+		if (!Platform.isDesktopApp) return;
 
 		if (!this.settings.setupWizardShown) {
 			this.settings.setupWizardShown = true;

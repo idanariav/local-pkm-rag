@@ -1,4 +1,5 @@
-import { existsSync, accessSync, constants as fsConstants } from "fs";
+import { Platform } from "obsidian";
+import { nodeFs } from "./nodeModules";
 import { CliRunner } from "./processRunner";
 import { buildAugmentedEnv, findExecutableInPath } from "./pathResolver";
 import { DetectResult } from "./types";
@@ -9,7 +10,7 @@ const runner = new CliRunner();
 
 function isExecutablePath(path: string): boolean {
 	try {
-		accessSync(path, fsConstants.X_OK);
+		nodeFs().accessSync(path, nodeFs().constants.X_OK);
 		return true;
 	} catch {
 		return false;
@@ -20,7 +21,7 @@ function isExecutablePath(path: string): boolean {
  *  binary name (left to the PATH-augmented env to resolve). Shared by detection and execution
  *  so both agree on which binary is actually being run. */
 export function resolveExecutableTarget(binaryName: string, overridePath?: string): string {
-	const useOverride = !!overridePath && existsSync(overridePath) && isExecutablePath(overridePath);
+	const useOverride = !!overridePath && nodeFs().existsSync(overridePath) && isExecutablePath(overridePath);
 	return useOverride ? (overridePath as string) : binaryName;
 }
 
@@ -33,6 +34,9 @@ export async function detectBinary(
 	healthCheckArgs: string[],
 	overridePath?: string
 ): Promise<DetectResult> {
+	if (!Platform.isDesktopApp) {
+		return { status: "not-found", message: "CLI tools need the desktop app" };
+	}
 	const env = await buildAugmentedEnv();
 	const target = resolveExecutableTarget(binaryName, overridePath);
 	// When falling back to bare-name PATH resolution, also resolve the real absolute path

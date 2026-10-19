@@ -47,6 +47,12 @@ export interface PkmRagSettings {
 	toolUpdateCommands: Record<ToolId, string[]>;
 
 	defaultCollection: string;
+
+	/** Vault folder holding the tools' exports (`<dir>/qmd`, `<dir>/qvoid`), used by the
+	 *  console's lite mode when a CLI isn't available (always, on mobile). */
+	liteExportDir: string;
+	/** Use lite mode even when the CLIs are installed — for checking it on desktop. */
+	forceLiteMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: PkmRagSettings = {
@@ -80,6 +86,9 @@ export const DEFAULT_SETTINGS: PkmRagSettings = {
 	},
 
 	defaultCollection: DEFAULTS.QMD_DEFAULT_COLLECTION,
+
+	liteExportDir: "Scaffolding/Embeddings",
+	forceLiteMode: false,
 };
 
 /**
